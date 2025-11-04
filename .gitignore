@@ -5,3 +5,4 @@ build/
 tmp/
 CLAUDE.md
 Testing/
+compile_commands.json
