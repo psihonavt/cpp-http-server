@@ -35,6 +35,7 @@ add_executable(test_client
 
 add_library(utils STATIC
   src/utils/llist.cpp
+  src/http_parser/http11_parser.cpp
 )
 target_include_directories(utils PUBLIC ${CMAKE_SOURCE_DIR}/src)
 
@@ -66,6 +67,7 @@ FetchContent_MakeAvailable(Catch2)
 
 add_executable(tests
   tests/utils/test_llist.cpp
+  tests/test_http_parser.cpp
 )
 
 target_compile_options(tests PRIVATE ${MY_COMPILE_FLAGS} ${MY_SANITIZING_FLAGS})
