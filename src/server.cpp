@@ -1,5 +1,6 @@
 #include "config/server.h"
-#include "llhttp.h"
+#include "http/http.h"
+#include "http/parser.h"
 #include "net.h"
 #include <arpa/inet.h>
 #include <cassert>
@@ -17,46 +18,19 @@
 #include <unistd.h>
 #include <utility>
 
-class Socket {
-    int m_sockfd;
+std::string handle_http_request(char const* data, std::size_t datalen)
+{
+    HttpRequest req {};
+    HttpResponse resp;
+    bool is_parsed { parse_http_request(data, datalen, &req) };
+    if (!is_parsed) {
+        resp = HttpResponse { .status = ResponseCode::BAD_REQUEST, .http_version = "1.1" };
+    } else {
 
-public:
-    Socket(int sockfd)
-        : m_sockfd { sockfd }
-    {
+        resp = HttpResponse { .status = ResponseCode::OK, .http_version = req.version };
     }
-
-    Socket(Socket& s) = delete;
-    Socket& operator=(Socket& s) = delete;
-
-    Socket(Socket&& s) noexcept
-    {
-        m_sockfd = s.m_sockfd;
-        s.m_sockfd = -1;
-    }
-
-    Socket& operator=(Socket&& s) noexcept
-    {
-        if (this == &s) {
-            return *this;
-        }
-        this->m_sockfd = s.m_sockfd;
-        s.m_sockfd = -1;
-        return *this;
-    }
-
-    ~Socket()
-    {
-        if (m_sockfd >= 0) {
-            close(m_sockfd);
-        }
-    }
-
-    operator int() const
-    {
-        return m_sockfd;
-    }
-};
+    return resp.status_line();
+}
 
 int main(int argc, char* argv[])
 
@@ -94,7 +68,7 @@ int main(int argc, char* argv[])
     }
 
     std::optional<Socket> server_socket {};
-    [[maybe_unused]] int yes { 1 };
+    int yes { 1 };
     std::pair<std::string, std::string> hostname_and_ip;
 
     for (bound_ai = servinfo; bound_ai != nullptr; bound_ai = bound_ai->ai_next) {
@@ -107,10 +81,10 @@ int main(int argc, char* argv[])
             continue;
         }
 
-        // if (setsockopt(maybe_socket, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == -1) {
-        //     std::cout << "Error setsockopt for " << hostname_and_ip.first << ":" << hostname_and_ip.second << ": " << strerror(errno) << "\n";
-        //     continue;
-        // }
+        if (setsockopt(maybe_socket, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == -1) {
+            std::cout << "Error setsockopt for " << hostname_and_ip.first << ":" << hostname_and_ip.second << ": " << strerror(errno) << "\n";
+            continue;
+        }
 
         if (bind(maybe_socket, bound_ai->ai_addr, bound_ai->ai_addrlen) == -1) {
             std::cout << "Error binding to " << hostname_and_ip.first << ":" << hostname_and_ip.second << ": " << strerror(errno) << "\n";
@@ -160,11 +134,15 @@ int main(int argc, char* argv[])
             continue;
         }
 
+        auto response { handle_http_request(buffer, static_cast<size_t>(bytes_received)) };
+
         std::string_view to_print_buffer { buffer };
 
         std::cout << std::format("[{0}] Got something from the client:\n{1}\n", client_ip, to_print_buffer);
+        std::cout << "Response from a server: " << response << "\n";
 
-        auto bytes_sent = send(client_socket, buffer, static_cast<size_t>(bytes_received), 0);
+        auto bytes_sent = send(client_socket, response.c_str(), response.size(), 0);
+
         if (bytes_sent == -1) {
             std::cout << "Failed to send data: " << strerror(errno) << " \n";
             continue;
