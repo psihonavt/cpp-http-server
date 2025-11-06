@@ -2,6 +2,7 @@
 #include "http/http.h"
 #include "http/parser.h"
 #include "net.h"
+#include "utils/files.h"
 #include <arpa/inet.h>
 #include <cassert>
 #include <cerrno>
@@ -15,27 +16,55 @@
 #include <sstream>
 #include <string>
 #include <sys/socket.h>
+#include <system_error>
 #include <unistd.h>
 #include <utility>
 
-std::string handle_http_request(char const* data, std::size_t datalen)
+std::string handle_http_request(char const* data, std::size_t datalen, std::filesystem::path const& server_root)
 {
     HttpRequest req {};
     HttpResponse resp;
     bool is_parsed { parse_http_request(data, datalen, &req) };
     if (!is_parsed) {
-        resp = HttpResponse { .status = ResponseCode::BAD_REQUEST, .http_version = "1.1" };
+        resp = HttpResponse { .status = ResponseCode::BAD_REQUEST, .http_version = "1.1", .headers = {} };
     } else {
-
-        resp = HttpResponse { .status = ResponseCode::OK, .http_version = req.version };
+        auto maybe_file = serve_file(url_decode(req.uri.path), server_root);
+        if (!maybe_file.is_success) {
+            if (maybe_file.error_code != std::errc::no_such_file_or_directory) {
+                resp = HttpResponse {
+                    .status = ResponseCode::INTERNAL_SERVER_ERROR,
+                    .http_version = req.version,
+                    .headers = {},
+                    .entity = HttpEntity {
+                        .headers = { HttpHeader { "Content-Type", "text/plain" } },
+                        .body = maybe_file.error },
+                };
+            } else {
+                resp = HttpResponse {
+                    .status = ResponseCode::NOT_FOUND,
+                    .http_version = req.version,
+                    .headers = {},
+                };
+            }
+        } else {
+            resp = HttpResponse {
+                .status = ResponseCode::OK,
+                .http_version = req.version,
+                .headers = {},
+                .entity = HttpEntity {
+                    .headers = { HttpHeader { "Content-Type", maybe_file.mime_type } },
+                    .body = maybe_file.content }
+            };
+        }
     }
-    return resp.status_line();
+    return resp.write();
 }
 
 int main(int argc, char* argv[])
 
 {
     int port { Config::Server::DEFAULT_PORT };
+    std::filesystem::path server_root { "/Users/cake-icing/tmp/cpp/learncpp/www.learncpp.com/" };
 
     if (argc > 1) {
         std::stringstream os {};
@@ -134,12 +163,12 @@ int main(int argc, char* argv[])
             continue;
         }
 
-        auto response { handle_http_request(buffer, static_cast<size_t>(bytes_received)) };
+        auto response { handle_http_request(buffer, static_cast<size_t>(bytes_received), server_root) };
 
         std::string_view to_print_buffer { buffer };
 
         std::cout << std::format("[{0}] Got something from the client:\n{1}\n", client_ip, to_print_buffer);
-        std::cout << "Response from a server: " << response << "\n";
+        // std::cout << "Response from a server: " << response << "\n";
 
         auto bytes_sent = send(client_socket, response.c_str(), response.size(), 0);
 

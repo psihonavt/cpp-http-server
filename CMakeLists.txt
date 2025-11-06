@@ -36,8 +36,10 @@ add_executable(test_client
 
 add_library(utils STATIC
   src/utils/llist.cpp
+  src/utils/files.cpp
   src/http/parser.cpp
   src/http/http.cpp
+  src/http/mime.cpp
 )
 target_include_directories(utils PUBLIC ${CMAKE_SOURCE_DIR}/src)
 
@@ -60,7 +62,9 @@ FetchContent_MakeAvailable(Catch2)
 
 add_executable(tests
   tests/utils/test_llist.cpp
-  tests/test_http_parser.cpp
+  tests/http/test_http_parser.cpp
+  tests/http/test_mime.cpp
+  tests/http/test_urls.cpp
 )
 
 target_compile_options(tests PRIVATE ${MY_COMPILE_FLAGS} ${MY_SANITIZING_FLAGS})
