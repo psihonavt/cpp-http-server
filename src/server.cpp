@@ -1,8 +1,10 @@
 #include "config/server.h"
+#include "CLI/CLI.hpp"
 #include "http/http.h"
 #include "http/parser.h"
 #include "net.h"
 #include "utils/files.h"
+#include <CLI/CLI.hpp>
 #include <arpa/inet.h>
 #include <cassert>
 #include <cerrno>
@@ -13,7 +15,6 @@
 #include <iostream>
 #include <netdb.h>
 #include <netinet/in.h>
-#include <sstream>
 #include <string>
 #include <sys/socket.h>
 #include <system_error>
@@ -30,6 +31,7 @@ std::string handle_http_request(char const* data, std::size_t datalen, std::file
     } else {
         auto maybe_file = serve_file(url_decode(req.uri.path), server_root);
         if (!maybe_file.is_success) {
+            std::cout << "Error serving " << req.uri.path << ": " << maybe_file.error << "\n";
             if (maybe_file.error_code != std::errc::no_such_file_or_directory) {
                 resp = HttpResponse {
                     .status = ResponseCode::INTERNAL_SERVER_ERROR,
@@ -60,27 +62,17 @@ std::string handle_http_request(char const* data, std::size_t datalen, std::file
     return resp.write();
 }
 
-int main(int argc, char* argv[])
-
+int main(int argc, char** argv)
 {
+    CLI::App app { "Best HTTP Server" };
     int port { Config::Server::DEFAULT_PORT };
     std::filesystem::path server_root { "/Users/cake-icing/tmp/cpp/learncpp/www.learncpp.com/" };
+    int listen_backlog { Config::Server::LISTEN_BACKLOG };
+    app.add_option("-p, --port", port, "server port");
+    app.add_option("-r, --server-root", server_root, "server root (serve files from here)");
+    app.add_option("-b, --listen_backlog", listen_backlog, "listening backlog");
 
-    if (argc > 1) {
-        std::stringstream os {};
-        os << argv[1];
-        os >> port;
-        if (!os) {
-            std::cout << "port must have a numeric value.";
-            std::exit(1);
-        }
-    }
-
-    char port_char[6];
-    if (std::snprintf(port_char, Config::Server::PORT_MAX_LEN, "%d", port) < 0) {
-        std::cout << "Failed to read the port: \n";
-        std::exit(1);
-    };
+    CLI11_PARSE(app, argc, argv);
 
     addrinfo hints {};
     addrinfo* servinfo;
@@ -91,7 +83,7 @@ int main(int argc, char* argv[])
     hints.ai_socktype = SOCK_STREAM;
 
     int status;
-    if ((status = getaddrinfo(nullptr, port_char, &hints, &servinfo)) != 0) {
+    if ((status = getaddrinfo(nullptr, std::to_string(port).c_str(), &hints, &servinfo)) != 0) {
         std::cout << "getaddrinfo: " << gai_strerror(status) << " \n";
         std::exit(1);
     }
@@ -167,7 +159,7 @@ int main(int argc, char* argv[])
 
         std::string_view to_print_buffer { buffer };
 
-        std::cout << std::format("[{0}] Got something from the client:\n{1}\n", client_ip, to_print_buffer);
+        // std::cout << std::format("[{0}] Got something from the client:\n{1}\n", client_ip, to_print_buffer);
         // std::cout << "Response from a server: " << response << "\n";
 
         auto bytes_sent = send(client_socket, response.c_str(), response.size(), 0);

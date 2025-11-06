@@ -21,7 +21,7 @@ set(MY_COMPILE_FLAGS
 )
 
 set(MY_SANITIZING_FLAGS
--fsanitize=address
+  -fsanitize=address
 )
 
 add_executable(server
@@ -43,8 +43,17 @@ add_library(utils STATIC
 )
 target_include_directories(utils PUBLIC ${CMAKE_SOURCE_DIR}/src)
 
+include(FetchContent)
 
-target_link_libraries(server PRIVATE utils)
+#### CLI11 ####
+FetchContent_Declare(
+  cli11
+  GIT_REPOSITORY https://github.com/CLIUtils/CLI11
+  GIT_TAG v2.6.1
+)
+FetchContent_MakeAvailable(cli11)
+
+target_link_libraries(server PRIVATE utils CLI11::CLI11)
 target_compile_options(server PRIVATE ${MY_COMPILE_FLAGS} ${MY_SANITIZING_FLAGS})
 target_link_options(server PRIVATE ${MY_SANITIZING_FLAGS})
 
@@ -52,7 +61,6 @@ target_compile_options(test_client PRIVATE ${MY_COMPILE_FLAGS} ${MY_SANITIZING_F
 target_link_options(test_client PRIVATE ${MY_SANITIZING_FLAGS})
 
 #### tests ####
-include(FetchContent)
 FetchContent_Declare(
   Catch2
   GIT_REPOSITORY https://github.com/catchorg/Catch2.git

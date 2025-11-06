@@ -14,7 +14,10 @@ FileResponse serve_file(std::string_view request_path, fs::path const& server_ro
     fs::path requested = server_root / fs::path { request_path }.relative_path();
 
     try {
-
+        std::cout << requested << "\n";
+        if (fs::is_directory(requested)) {
+            requested /= "index.html";
+        }
         auto requested_cannonical { fs::canonical(requested) };
         auto sr_cannonical { fs::canonical(server_root) };
 
@@ -23,7 +26,7 @@ FileResponse serve_file(std::string_view request_path, fs::path const& server_ro
             requested_cannonical.begin(), requested_cannonical.end());
 
         if (root_end != sr_cannonical.end()) {
-            return FileResponse { .is_success = false, .error = "File not found" };
+            return FileResponse { .is_success = false, .error = "File not found (bad symlinks?)" };
         }
 
         if (!fs::is_regular_file(requested_cannonical)) {
@@ -46,11 +49,9 @@ FileResponse serve_file(std::string_view request_path, fs::path const& server_ro
     }
 }
 
-int main1()
+int main()
 {
-    fs::path root { "/tmp/" };
-    auto filepath = root / "/steam.pipe";
-    std::cout << filepath << "??\n";
-    std::cout << fs::exists(filepath) << "\n";
+    fs::path root { "/tmp" };
+    std::cout << fs::is_directory(root) << "\n";
     return 0;
 }
