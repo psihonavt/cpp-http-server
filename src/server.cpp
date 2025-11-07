@@ -70,7 +70,7 @@ int main(int argc, char** argv)
     int listen_backlog { Config::Server::LISTEN_BACKLOG };
     app.add_option("-p, --port", port, "server port");
     app.add_option("-r, --server-root", server_root, "server root (serve files from here)");
-    app.add_option("-b, --listen_backlog", listen_backlog, "listening backlog");
+    app.add_option("-b, --listen-backlog", listen_backlog, "listening backlog");
 
     CLI11_PARSE(app, argc, argv);
 
