@@ -4,6 +4,7 @@
 #include "http/parser.h"
 #include "net.h"
 #include "utils/files.h"
+#include "utils/logging.h"
 #include <CLI/CLI.hpp>
 #include <arpa/inet.h>
 #include <cassert>
@@ -11,7 +12,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <format>
 #include <iostream>
 #include <netdb.h>
 #include <netinet/in.h>
@@ -31,7 +31,7 @@ std::string handle_http_request(char const* data, std::size_t datalen, std::file
     } else {
         auto maybe_file = serve_file(url_decode(req.uri.path), server_root);
         if (!maybe_file.is_success) {
-            std::cout << "Error serving " << req.uri.path << ": " << maybe_file.error << "\n";
+            LOG_ERROR("Error serving {}: {}", req.uri.path, maybe_file.error);
             if (maybe_file.error_code != std::errc::no_such_file_or_directory) {
                 resp = HttpResponse {
                     .status = ResponseCode::INTERNAL_SERVER_ERROR,
@@ -74,6 +74,9 @@ int main(int argc, char** argv)
 
     CLI11_PARSE(app, argc, argv);
 
+    setup_logging();
+    LOG_INFO("Starting the server ...");
+
     addrinfo hints {};
     addrinfo* servinfo;
     addrinfo* bound_ai { nullptr };
@@ -90,25 +93,26 @@ int main(int argc, char** argv)
 
     std::optional<Socket> server_socket {};
     int yes { 1 };
-    std::pair<std::string, std::string> hostname_and_ip;
+
+    std::string hostname, ip;
 
     for (bound_ai = servinfo; bound_ai != nullptr; bound_ai = bound_ai->ai_next) {
-        hostname_and_ip = get_ip_and_hostname(bound_ai);
+        std::tie(hostname, ip) = get_ip_and_hostname(bound_ai);
 
         auto maybe_socket { Socket { socket(bound_ai->ai_family, bound_ai->ai_socktype, bound_ai->ai_protocol) } };
 
         if (maybe_socket == -1) {
-            std::cout << "Error creating a socket for " << hostname_and_ip.first << ":" << hostname_and_ip.second << ": " << strerror(errno) << "\n";
+            LOG_ERROR("Error creating a socket for {}:{} - {}", hostname, ip, strerror(errno));
             continue;
         }
 
         if (setsockopt(maybe_socket, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == -1) {
-            std::cout << "Error setsockopt for " << hostname_and_ip.first << ":" << hostname_and_ip.second << ": " << strerror(errno) << "\n";
+            LOG_ERROR("Error setsockopt for {}:{} - {}", hostname, ip, strerror(errno));
             continue;
         }
 
         if (bind(maybe_socket, bound_ai->ai_addr, bound_ai->ai_addrlen) == -1) {
-            std::cout << "Error binding to " << hostname_and_ip.first << ":" << hostname_and_ip.second << ": " << strerror(errno) << "\n";
+            LOG_ERROR("Error binding to {}:{} - {}", hostname, ip, strerror(errno));
             continue;
         }
 
@@ -117,18 +121,18 @@ int main(int argc, char** argv)
     }
 
     if (!server_socket) {
-        std::cout << "Failed to find a suitable interface to bind the server to.\n";
+        LOG_INFO("Failed to find a suitable interface to bind the server to.");
         std::exit(1);
     }
 
     if (listen(*server_socket, Config::Server::LISTEN_BACKLOG) == -1) {
-        std::cout << "Error to listen at " << hostname_and_ip.first << ":" << hostname_and_ip.second << ": " << strerror(errno);
+        LOG_ERROR("Error listening at {}:{} - {}", hostname, ip, strerror(errno));
         std::exit(1);
     }
 
     freeaddrinfo(servinfo);
 
-    std::cout << "listenting on " << hostname_and_ip.second << "[" << hostname_and_ip.first << "]:" << port << "\n";
+    LOG_INFO("Listening on {}[{}]: {}", hostname, ip, port);
 
     while (true) {
         sockaddr_storage their_address;
@@ -159,8 +163,7 @@ int main(int argc, char** argv)
 
         std::string_view to_print_buffer { buffer };
 
-        // std::cout << std::format("[{0}] Got something from the client:\n{1}\n", client_ip, to_print_buffer);
-        // std::cout << "Response from a server: " << response << "\n";
+        LOG_DEBUG("Got something from the cline[{}]:\n{}", client_ip, to_print_buffer);
 
         auto bytes_sent = send(client_socket, response.c_str(), response.size(), 0);
 

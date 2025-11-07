@@ -14,7 +14,6 @@ FileResponse serve_file(std::string_view request_path, fs::path const& server_ro
     fs::path requested = server_root / fs::path { request_path }.relative_path();
 
     try {
-        std::cout << requested << "\n";
         if (fs::is_directory(requested)) {
             requested /= "index.html";
         }
@@ -49,7 +48,7 @@ FileResponse serve_file(std::string_view request_path, fs::path const& server_ro
     }
 }
 
-int main()
+int main_files()
 {
     fs::path root { "/tmp" };
     std::cout << fs::is_directory(root) << "\n";
