@@ -3,12 +3,11 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <string>
+#include <sys/poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <utility>
 
-void print_ip(addrinfo* ai);
-void traverse_addrinfo(addrinfo* addr);
 std::pair<std::string, std::string> get_ip_and_hostname(addrinfo* ai);
 std::string get_ip_address(sockaddr_storage* ss);
 
@@ -52,3 +51,6 @@ public:
         return m_sockfd;
     }
 };
+
+void add_to_pfds(pollfd** pfds, int newfd, unsigned int* fd_count, size_t* fd_size);
+void del_from_pfds(pollfd** pfds, int fd, unsigned int* fd_count, size_t* fd_size);

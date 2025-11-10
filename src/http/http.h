@@ -61,10 +61,12 @@ struct HttpResponse {
 
     ResponseCode status;
     std::string http_version;
-    std::vector<HttpHeader> headers;
+    std::vector<HttpHeader> headers {};
     std::optional<HttpEntity> entity {};
 
     std::string write() const;
 };
 
 std::string url_decode(std::string_view encoded);
+
+inline HttpResponse const BAD_REQUEST_RESPONSE { .status = ResponseCode::BAD_REQUEST, .http_version = "1.1" };

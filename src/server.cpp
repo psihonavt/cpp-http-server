@@ -6,27 +6,48 @@
 #include "utils/files.h"
 #include "utils/logging.h"
 #include <CLI/CLI.hpp>
+#include <_string.h>
 #include <arpa/inet.h>
+#include <array>
 #include <cassert>
 #include <cerrno>
+#include <chrono>
+#include <csignal>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fcntl.h>
 #include <iostream>
+#include <map>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <string>
+#include <sys/fcntl.h>
+#include <sys/poll.h>
+#include <sys/signal.h>
 #include <sys/socket.h>
 #include <system_error>
 #include <unistd.h>
 #include <utility>
 
-std::string handle_http_request(char const* data, std::size_t datalen, std::filesystem::path const& server_root)
+namespace Globals {
+int s_singnal_pipe_wfd { -1 };
+int s_singnal_pipe_rfd { -1 };
+};
+
+std::pair<bool, HttpRequest> parse_http_request(char const* data, size_t datalen)
 {
     HttpRequest req {};
+    bool is_finished { parse_http_request(data, datalen, &req) };
+    return { is_finished, std::move(req) };
+}
+
+std::string handle_http_request(HttpRequest const& req, std::filesystem::path const& server_root)
+{
     HttpResponse resp;
-    bool is_parsed { parse_http_request(data, datalen, &req) };
-    if (!is_parsed) {
+    if (req.method == "") {
         resp = HttpResponse { .status = ResponseCode::BAD_REQUEST, .http_version = "1.1", .headers = {} };
     } else {
         auto maybe_file = serve_file(url_decode(req.uri.path), server_root);
@@ -62,21 +83,115 @@ std::string handle_http_request(char const* data, std::size_t datalen, std::file
     return resp.write();
 }
 
-int main(int argc, char** argv)
+void signals_handler(int sig)
 {
-    CLI::App app { "Best HTTP Server" };
-    int port { Config::Server::DEFAULT_PORT };
-    std::filesystem::path server_root { "/Users/cake-icing/tmp/cpp/learncpp/www.learncpp.com/" };
-    int listen_backlog { Config::Server::LISTEN_BACKLOG };
-    app.add_option("-p, --port", port, "server port");
-    app.add_option("-r, --server-root", server_root, "server root (serve files from here)");
-    app.add_option("-b, --listen-backlog", listen_backlog, "listening backlog");
+    if (Globals::s_singnal_pipe_wfd != -1) {
+        write(Globals::s_singnal_pipe_wfd, &sig, sizeof(sig));
+    }
+}
 
-    CLI11_PARSE(app, argc, argv);
+void setup_signal_handling()
+{
+    int signal_pipe[2];
+    if (pipe(signal_pipe) == -1) {
+        LOG_ERROR("Failed to create a pipe for signal notifiers: {}", strerror(errno));
+        std::exit(1);
+    };
 
-    setup_logging();
-    LOG_INFO("Starting the server ...");
+    auto pw_flags = fcntl(signal_pipe[1], F_GETFL);
+    if ((fcntl(signal_pipe[1], F_SETFL, pw_flags | O_NONBLOCK)) == -1) {
+        LOG_ERROR("Failed to mark the writing end of a pipe as non-blocking: {}", strerror(errno));
+        std::exit(1);
+    };
+    Globals::s_singnal_pipe_rfd = signal_pipe[0];
+    Globals::s_singnal_pipe_wfd = signal_pipe[1];
 
+    std::array signals_to_handle = {
+        SIGINT,
+        SIGABRT,
+        SIGALRM,
+        SIGINFO,
+        SIGHUP,
+        SIGTERM,
+    };
+    struct sigaction sa;
+    sa.sa_handler = signals_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART;
+
+    for (auto sig : signals_to_handle) {
+        if (sigaction(sig, &sa, nullptr) == -1) {
+            LOG_ERROR("Failed to register a signal handler: {}", strerror(errno));
+            std::exit(1);
+        }
+    }
+
+    std::array signals_to_ignore = {
+        SIGPIPE,
+    };
+
+    for (auto sig : signals_to_ignore) {
+        signal(sig, SIG_IGN);
+    }
+}
+
+struct Connection {
+    Socket client;
+    long long connection_id;
+
+    std::vector<std::string> responses_queue {};
+
+    char* send_buf { nullptr };
+    ssize_t bytes_send_need { 0 };
+    ssize_t bytes_sent_so_far { 0 };
+
+    char* read_buf { nullptr };
+    ssize_t bytes_read_need { 0 };
+    ssize_t bytes_read_so_far { 0 };
+
+    void reset_send_buffer()
+    {
+        delete[] send_buf;
+        send_buf = nullptr;
+        bytes_send_need = 0;
+        bytes_sent_so_far = 0;
+    }
+
+    void reset_read_buffer()
+    {
+        delete[] read_buf;
+        read_buf = nullptr;
+        bytes_read_need = 0;
+        bytes_read_so_far = 0;
+    }
+
+    void prepare_send_buffer()
+    {
+        if (send_buf) {
+            return;
+        }
+
+        assert(!responses_queue.empty() && "Response queue mustn't be empty at this point!");
+
+        auto response = responses_queue[0];
+        send_buf = new char[response.size()];
+        std::copy(response.begin(), response.end(), send_buf);
+        bytes_send_need = static_cast<ssize_t>(response.size());
+        responses_queue.erase(responses_queue.begin());
+    }
+};
+
+struct ServerContext {
+    Socket const& server;
+    std::filesystem::path const& server_root;
+    pollfd** pfds;
+    size_t* fd_size;
+    uint* fd_count;
+    std::map<int, Connection> connections;
+};
+
+Socket start_server(int port)
+{
     addrinfo hints {};
     addrinfo* servinfo;
     addrinfo* bound_ai { nullptr };
@@ -133,45 +248,211 @@ int main(int argc, char** argv)
     freeaddrinfo(servinfo);
 
     LOG_INFO("Listening on {}[{}]: {}", hostname, ip, port);
+    return std::move(*server_socket);
+}
+
+void establish_connection(ServerContext& ctx)
+{
+    sockaddr_storage their_address;
+    socklen_t their_addr_len { sizeof(their_address) };
+    Socket client_socket { accept(ctx.server, reinterpret_cast<sockaddr*>(&their_address), &their_addr_len) };
+
+    int s_flags { fcntl(client_socket, F_GETFL) };
+    if (s_flags == -1 || fcntl(client_socket, F_SETFL, s_flags | O_NONBLOCK) != 0) {
+        LOG_ERROR("Failed to mark client socket as non-blocking: {}", strerror(errno));
+    }
+    if (client_socket == -1) {
+        if (errno == EINTR || errno == ECONNABORTED) {
+            return;
+        }
+        LOG_ERROR("Failed to accept a connection: {}", strerror(errno));
+    }
+
+    int client_fd { static_cast<int>(client_socket) };
+    char* read_buf = new char[Config::Server::RECV_BUFFER_SIZE];
+    auto connection_id = std::chrono::system_clock::now().time_since_epoch().count();
+    ctx.connections.emplace(
+        client_fd,
+        Connection { .client = std::move(client_socket), .connection_id = connection_id, .read_buf = read_buf, .bytes_read_need = Config::Server::RECV_BUFFER_SIZE - 1 });
+    add_to_pfds(ctx.pfds, client_fd, ctx.fd_count, ctx.fd_size);
+    LOG_INFO("Polling a new connection from {} on socket {}", get_ip_address(&their_address), client_fd);
+}
+
+void handle_recv_events(ServerContext& ctx, size_t* pfd_i)
+{
+    int sender_fd { (*ctx.pfds)[*pfd_i].fd };
+    if (!ctx.connections.contains(sender_fd)) {
+        LOG_ERROR("No connection found for socket {}!", sender_fd);
+        return;
+    }
+    auto& connection { ctx.connections.at(sender_fd) };
+    auto n = recv(sender_fd, connection.read_buf + connection.bytes_read_so_far, static_cast<size_t>(connection.bytes_read_need), 0);
+
+    if (n == 0) {
+        LOG_INFO("Client on socket {} closed the connection. Cleaning up ...", sender_fd);
+        del_from_pfds(ctx.pfds, sender_fd, ctx.fd_count, ctx.fd_size);
+        delete connection.read_buf;
+        ctx.connections.erase(sender_fd);
+        return;
+    } else if (n < 0) {
+        if (errno == EINTR || errno == ECONNABORTED) {
+            return;
+        }
+        LOG_WARN("Error receiving data on socket {}: {}. Cleaning up ...", sender_fd, strerror(errno));
+        del_from_pfds(ctx.pfds, sender_fd, ctx.fd_count, ctx.fd_size);
+        delete connection.read_buf;
+        ctx.connections.erase(sender_fd);
+        return;
+    } else {
+        connection.bytes_read_need -= n;
+        connection.bytes_read_so_far += n;
+        auto [request_finished, request] = parse_http_request(connection.read_buf, static_cast<size_t>(connection.bytes_read_so_far));
+        if (request_finished) {
+            LOG_INFO("[{}] Received a complete HTTP request on socket {}: {}", connection.connection_id, sender_fd, request.uri.path);
+            auto response = handle_http_request(request, ctx.server_root);
+            connection.responses_queue.push_back(response);
+            connection.reset_read_buffer();
+            LOG_INFO("[{}] socket {} - number of queued responses {}", connection.connection_id, sender_fd, connection.responses_queue.size());
+            (*ctx.pfds)[*pfd_i].events |= POLLOUT;
+        } else {
+            // std::string p_buffer { connection.read_buf };
+            // LOG_INFO("socket {}: read {} bytes, need more {} bytes. So far: {}", sender_fd, connection.bytes_read_so_far, connection.bytes_read_need, p_buffer);
+        }
+        return;
+    }
+}
+
+void handle_send_events(ServerContext& ctx, size_t* pfd_i)
+{
+    int receiver_fd { (*ctx.pfds)[*pfd_i].fd };
+    if (!ctx.connections.contains(receiver_fd)) {
+        LOG_ERROR("No connection found for socket {}!", receiver_fd);
+        return;
+    }
+
+    auto& connection { ctx.connections.at(receiver_fd) };
+
+    if (connection.responses_queue.empty() && !connection.send_buf) {
+        LOG_WARN("socket {} got POLLOUT but there is nothing to send ...", receiver_fd);
+        return;
+    }
+
+    connection.prepare_send_buffer();
+    auto n = send(receiver_fd, connection.send_buf + connection.bytes_sent_so_far, static_cast<size_t>(connection.bytes_send_need), 0);
+    if (n == -1) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            return;
+        } else {
+            LOG_ERROR("[{}] socket {} error send: {}", connection.connection_id, receiver_fd, strerror(errno));
+            del_from_pfds(ctx.pfds, receiver_fd, ctx.fd_count, ctx.fd_size);
+            delete connection.read_buf;
+            delete connection.send_buf;
+            ctx.connections.erase(receiver_fd);
+            return;
+        }
+    }
+    connection.bytes_sent_so_far += n;
+    connection.bytes_send_need -= n;
+    if (connection.bytes_send_need == 0) {
+        LOG_INFO("[{}] socket {} sent the entire response", connection.connection_id, receiver_fd);
+        connection.reset_send_buffer();
+        if (connection.responses_queue.empty()) {
+            (*ctx.pfds)[*pfd_i].events &= ~POLLOUT;
+        }
+        return;
+    }
+    LOG_INFO("[{}] s {}/{} to socket {}", connection.connection_id, connection.bytes_sent_so_far, connection.bytes_sent_so_far + connection.bytes_send_need, receiver_fd);
+}
+
+void handle_signal_event()
+{
+
+    assert(Globals::s_singnal_pipe_rfd != -1 && "signal pipe rfd must be initialized");
+    int signum;
+    auto received = read(Globals::s_singnal_pipe_rfd, &signum, sizeof(signum));
+    if (received == -1) {
+        LOG_WARN("Failed to read from a signal pipe: {}", strerror(errno));
+        return;
+    }
+
+    LOG_INFO("GOT A SIGNAL FROM THE KERNEL: {}", strsignal(signum));
+    // std::exit(1);
+}
+
+void process_connections(ServerContext& ctx)
+{
+    for (size_t i { 0 }; i < *ctx.fd_count; ++i) {
+        auto fd { (*ctx.pfds)[i] };
+        if (fd.revents & (POLLIN | POLLHUP)) {
+            if (fd.fd == ctx.server) {
+                establish_connection(ctx);
+            } else if (fd.fd == Globals::s_singnal_pipe_rfd) {
+                handle_signal_event();
+            } else {
+                handle_recv_events(ctx, &i);
+            }
+        }
+        if (fd.revents & POLLOUT) {
+            handle_send_events(ctx, &i);
+        }
+    }
+}
+
+int main(int argc, char** argv)
+{
+    CLI::App app { "Best HTTP Server" };
+    int port { Config::Server::DEFAULT_PORT };
+    std::filesystem::path server_root { "/Users/cake-icing/tmp/cpp/learncpp/www.learncpp.com/" };
+    int listen_backlog { Config::Server::LISTEN_BACKLOG };
+    app.add_option("-p, --port", port, "server port");
+    app.add_option("-r, --server-root", server_root, "server root (serve files from here)");
+    app.add_option("-b, --listen-backlog", listen_backlog, "listening backlog");
+
+    CLI11_PARSE(app, argc, argv);
+
+    setup_logging();
+    setup_signal_handling();
+    LOG_INFO("Starting the server ...");
+    auto server_socket { start_server(port) };
+
+    size_t fd_size { 200 };
+    uint fd_count { 0 };
+    auto pfds { new pollfd[fd_size] };
+
+    pfds[0].fd = server_socket;
+    pfds[0].events = POLLIN;
+
+    assert(Globals::s_singnal_pipe_rfd != -1 && "read signal pipe must be initialized.");
+    pfds[1].fd = Globals::s_singnal_pipe_rfd;
+    pfds[1].events = POLLIN;
+
+    fd_count += 2;
+
+    ServerContext ctx {
+        .server = server_socket,
+        .server_root = server_root,
+        .pfds = &pfds,
+        .fd_size = &fd_size,
+        .fd_count = &fd_count,
+        .connections = {},
+    };
 
     while (true) {
-        sockaddr_storage their_address;
-        socklen_t their_addr_len { sizeof(their_address) };
-        Socket client_socket { accept(*server_socket, reinterpret_cast<sockaddr*>(&their_address), &their_addr_len) };
-        if (client_socket == -1) {
-            if (errno == EINTR || errno == ECONNABORTED) {
-                continue;
-            }
-            std::cout << "Failed to accept a connection: " << strerror(errno) << " \n";
+        int poll_count { poll(pfds, fd_count, -1) };
+        if (poll_count == -1) {
+            LOG_ERROR("Polling failed: {}", strerror(errno));
+            // maybe there is something in our signal pipe, read and display it
+            handle_signal_event();
             std::exit(1);
         }
 
-        auto client_ip { get_ip_address(&their_address) };
-
-        char buffer[Config::Server::RECV_BUFFER_SIZE] {};
-        auto bytes_received = recv(client_socket, buffer, sizeof(buffer) - 1, 0);
-        if (bytes_received <= 0) {
-            if (bytes_received == 0) {
-                std::cout << "Connection was closed by the client\n";
-            } else {
-                std::cout << "Failed to receive data: " << strerror(errno) << " \n";
-            }
-            continue;
-        }
-
-        auto response { handle_http_request(buffer, static_cast<size_t>(bytes_received), server_root) };
-
-        std::string_view to_print_buffer { buffer };
-
-        LOG_DEBUG("Got something from the cline[{}]:\n{}", client_ip, to_print_buffer);
-
-        auto bytes_sent = send(client_socket, response.c_str(), response.size(), 0);
-
-        if (bytes_sent == -1) {
-            std::cout << "Failed to send data: " << strerror(errno) << " \n";
-            continue;
-        }
+        process_connections(ctx);
     }
+
+    delete[] pfds;
+    close(Globals::s_singnal_pipe_rfd);
+    close(Globals::s_singnal_pipe_wfd);
+    close(server_socket);
 
     return 0;
 }

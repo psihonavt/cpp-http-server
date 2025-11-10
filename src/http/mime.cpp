@@ -1,4 +1,6 @@
 #include "mime.h"
+#include <algorithm>
+#include <cctype>
 #include <map>
 #include <ranges>
 #include <string>
@@ -10,6 +12,7 @@ std::map<std::string, std::string> const known_mime_types {
     { "jpg", "image/jpg" },
     { "jpeg", "image/jpeg" },
     { "gif", "image/gif" },
+    { "svg", "image/svg+xml" },
     { "js", "application/javascript" },
     { "json", "application/json" },
     { "html", "text/html" },
@@ -18,26 +21,23 @@ std::map<std::string, std::string> const known_mime_types {
 
 };
 
+std::string& str_tolower(std::string& s)
+{
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return std::tolower(c); });
+    return s;
+}
+
 std::string get_mime_type(std::string_view filename)
 {
     auto tokens = std::ranges::to<std::vector<std::string>>(std::views::split(filename, '.'));
     if (tokens.size() < 2) {
         return std::string { DEFAULT_MIME_TYPE };
     } else {
-        auto const& ext { tokens.back() };
+        auto const& ext { str_tolower(tokens.back()) };
 
         if (auto found = known_mime_types.find(ext); found != known_mime_types.end()) {
             return known_mime_types.at(ext);
         }
     }
     return std::string { DEFAULT_MIME_TYPE };
-}
-
-int main_mime()
-{
-    std::string fname { "index.html" };
-    std::string str { "hello world" };
-    auto tokens = std::views::split(fname, ".");
-    auto words = std::views::split(str, " ");
-    return 0;
 }

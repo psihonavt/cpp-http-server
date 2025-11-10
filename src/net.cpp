@@ -1,32 +1,12 @@
 #include "net.h"
 #include "config/server.h"
+#include "utils/logging.h"
 #include <arpa/inet.h>
 #include <cstddef>
 #include <cstring>
-#include <iostream>
 #include <netinet/in.h>
+#include <sys/poll.h>
 #include <sys/socket.h>
-
-void print_ip(addrinfo* ai)
-{
-    // bool is_IPv6 { ai->ai_family == PF_INET6 };
-    char ip[INET6_ADDRSTRLEN];
-    if (ai->ai_family == PF_INET6) {
-        inet_ntop(ai->ai_family, &reinterpret_cast<sockaddr_in6*>(ai->ai_addr)->sin6_addr, ip, INET6_ADDRSTRLEN);
-    } else {
-        inet_ntop(ai->ai_family, &reinterpret_cast<sockaddr_in*>(ai->ai_addr)->sin_addr, ip, INET6_ADDRSTRLEN);
-    }
-    std::cout << "AI HOSTNAME: " << ((ai->ai_canonname) ? ai->ai_canonname : "<NO HOSTNAME> ") << " IP: " << ip << "\n";
-}
-
-void traverse_addrinfo(addrinfo* addr)
-{
-    auto ai_next { addr };
-    while (ai_next) {
-        print_ip(ai_next);
-        ai_next = ai_next->ai_next;
-    }
-}
 
 std::pair<std::string, std::string> get_ip_and_hostname(addrinfo* ai)
 {
@@ -63,4 +43,34 @@ std::string get_ip_address(sockaddr_storage* ss)
     }
 
     return std::string { ip };
+}
+
+void add_to_pfds(pollfd** pfds, int newfd, uint* fd_count, size_t* fd_size)
+{
+    size_t growth_factor { 2 };
+    // resize pollfds
+    if (*fd_count == *fd_size) {
+        pollfd* bigger_pfds = new pollfd[*fd_size * growth_factor];
+        std::copy(*pfds, *pfds + *fd_size, bigger_pfds);
+        *fd_size *= growth_factor;
+        delete[] *pfds;
+        *pfds = bigger_pfds;
+    }
+    (*pfds)[*fd_count].fd = newfd;
+    (*pfds)[*fd_count].events = (POLLIN | POLLHUP | POLLOUT);
+    (*pfds)[*fd_count].revents = 0;
+
+    (*fd_count)++;
+}
+
+void del_from_pfds(pollfd** pfds, int fd, uint* fd_count, size_t* fd_size)
+{
+    for (size_t i { 0 }; i < *fd_size; i++) {
+        if ((*pfds)[i].fd == fd) {
+            (*pfds)[i] = (*pfds)[*fd_count - 1];
+            break;
+        }
+    }
+
+    (*fd_count)--;
 }
