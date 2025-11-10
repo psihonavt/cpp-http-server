@@ -1,4 +1,3 @@
-#include "net.h"
 #include <arpa/inet.h>
 #include <cstdlib>
 #include <cstring>
@@ -29,8 +28,6 @@ int main(int argc, char* argv[])
         std::cout << "Error getting the addrinfo for " << hostname << ":" << port << ": " << gai_strerror(status) << "\n";
         std::exit(1);
     }
-
-    traverse_addrinfo(servinfo);
 
     int client_socket { socket(servinfo->ai_family, servinfo->ai_socktype, servinfo->ai_protocol) };
     int error = connect(client_socket, servinfo->ai_addr, servinfo->ai_addrlen);

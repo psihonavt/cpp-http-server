@@ -16,6 +16,11 @@ The dev machine is macOS Sonoma.
   - Instead of: "Change line 48 to use `servinfo->ai_addrlen`"
   - Say: "Check the addrinfo structure - it has a field that contains the correct size"
 - **Don't hold back when uncertain.** If you genuinely don't know the answer or need to investigate, provide full detail and reasoning.
+- **Consider the larger picture.** When answering questions, think beyond the specific code example I'm asking about. Consider:
+  - General cases vs the specific example
+  - What happens with complex types, not just simple POD structs
+  - Edge cases and broader implications
+  - The conceptual question I'm really asking, not just the narrow code-sample question
 
 ## Code Review Standards
 
