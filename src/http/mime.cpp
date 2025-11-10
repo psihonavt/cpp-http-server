@@ -21,7 +21,7 @@ std::map<std::string, std::string> const known_mime_types {
 
 };
 
-std::string str_tolower(std::string s)
+std::string& str_tolower(std::string& s)
 {
     std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return std::tolower(c); });
     return s;

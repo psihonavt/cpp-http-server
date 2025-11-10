@@ -42,7 +42,7 @@ FileResponse serve_file(std::string_view request_path, fs::path const& server_ro
         std::string content { std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>() };
         auto mime_type { get_mime_type(requested_cannonical.filename().string()) };
 
-        return FileResponse { .is_success = true, .content = content, .mime_type = mime_type };
+        return FileResponse { .is_success = true, .content = std::move(content), .mime_type = mime_type };
     } catch (fs::filesystem_error const& e) {
         return FileResponse { .is_success = false, .error = e.what(), .error_code = e.code() };
     }

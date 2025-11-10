@@ -52,5 +52,5 @@ public:
     }
 };
 
-void add_to_pfds(pollfd** pfds, int newfd, uint* fd_count, size_t* fd_size);
-void del_from_pfds(pollfd** pfds, int fd, uint* fd_count, size_t* fd_size);
+void add_to_pfds(pollfd** pfds, int newfd, unsigned int* fd_count, size_t* fd_size);
+void del_from_pfds(pollfd** pfds, int fd, unsigned int* fd_count, size_t* fd_size);

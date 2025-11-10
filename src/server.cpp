@@ -24,7 +24,6 @@
 #include <netinet/in.h>
 #include <poll.h>
 #include <string>
-#include <sys/_types/_ssize_t.h>
 #include <sys/fcntl.h>
 #include <sys/poll.h>
 #include <sys/signal.h>
@@ -93,7 +92,7 @@ void signals_handler(int sig)
 
 void setup_signal_handling()
 {
-    int* signal_pipe = new int[2];
+    int signal_pipe[2];
     if (pipe(signal_pipe) == -1) {
         LOG_ERROR("Failed to create a pipe for signal notifiers: {}", strerror(errno));
         std::exit(1);
