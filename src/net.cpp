@@ -1,6 +1,7 @@
 #include "net.h"
 #include "config/server.h"
 #include "utils/logging.h"
+#include <algorithm>
 #include <arpa/inet.h>
 #include <cstddef>
 #include <cstring>
@@ -45,32 +46,46 @@ std::string get_ip_address(sockaddr_storage* ss)
     return std::string { ip };
 }
 
-void add_to_pfds(pollfd** pfds, int newfd, uint* fd_count, size_t* fd_size)
+void PfdsHolder::add_fd(int newfd, short events)
 {
-    size_t growth_factor { 2 };
-    // resize pollfds
-    if (*fd_count == *fd_size) {
-        pollfd* bigger_pfds = new pollfd[*fd_size * growth_factor];
-        std::copy(*pfds, *pfds + *fd_size, bigger_pfds);
-        *fd_size *= growth_factor;
-        delete[] *pfds;
-        *pfds = bigger_pfds;
-    }
-    (*pfds)[*fd_count].fd = newfd;
-    (*pfds)[*fd_count].events = (POLLIN | POLLHUP | POLLOUT);
-    (*pfds)[*fd_count].revents = 0;
-
-    (*fd_count)++;
+    m_pfds.emplace_back(newfd, events, 0);
 }
 
-void del_from_pfds(pollfd** pfds, int fd, uint* fd_count, size_t* fd_size)
+void PfdsHolder::remove_fd(int fd)
 {
-    for (size_t i { 0 }; i < *fd_size; i++) {
-        if ((*pfds)[i].fd == fd) {
-            (*pfds)[i] = (*pfds)[*fd_count - 1];
-            break;
-        }
+    auto found { std::find_if(m_pfds.begin(), m_pfds.end(), [&fd](pollfd const& pfd) -> bool { return pfd.fd == fd; }) };
+    if (found != m_pfds.end()) {
+        m_pfds.erase(found);
     }
+}
 
-    (*fd_count)--;
+nfds_t PfdsHolder::size()
+{
+    return static_cast<nfds_t>(m_pfds.size());
+}
+
+pollfd* PfdsHolder::c_array()
+{
+    return m_pfds.data();
+}
+
+std::vector<pollfd>& PfdsHolder::all()
+{
+    return m_pfds;
+}
+
+void PfdsHolder::add_fd_events(int fd, short events)
+{
+    auto found { std::find_if(m_pfds.begin(), m_pfds.end(), [&fd](pollfd const& pfd) -> bool { return pfd.fd == fd; }) };
+    if (found != m_pfds.end()) {
+        (*found).events |= events;
+    }
+}
+
+void PfdsHolder::remove_fd_events(int fd, short events)
+{
+    auto found { std::find_if(m_pfds.begin(), m_pfds.end(), [&fd](pollfd const& pfd) -> bool { return pfd.fd == fd; }) };
+    if (found != m_pfds.end()) {
+        (*found).events &= ~events;
+    }
 }
