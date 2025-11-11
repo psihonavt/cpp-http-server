@@ -310,7 +310,7 @@ std::optional<PfdsChange> handle_recv_events(ServerContext& ctx, int sender_fd)
             auto response = handle_http_request(request, ctx.server_root);
             connection.responses_queue.push_back(response);
             connection.reset_read_buffer();
-            LOG_INFO("[{}] socket {} - number of queued responses {}", connection.connection_id, sender_fd, connection.responses_queue.size());
+            LOG_DEBUG("[{}] socket {} - number of queued responses {}", connection.connection_id, sender_fd, connection.responses_queue.size());
             return PfdsChange { .fd = sender_fd, .action = PfdsChangeAction::AddEvents, .events = POLLOUT };
         }
         return {};
@@ -354,7 +354,7 @@ std::optional<PfdsChange> handle_send_events(ServerContext& ctx, int receiver_fd
         }
         return {};
     }
-    LOG_INFO("[{}] s {}/{} to socket {}", connection.connection_id, connection.bytes_sent_so_far, connection.bytes_sent_so_far + connection.bytes_send_need, receiver_fd);
+    LOG_DEBUG("[{}] s {}/{} to socket {}", connection.connection_id, connection.bytes_sent_so_far, connection.bytes_sent_so_far + connection.bytes_send_need, receiver_fd);
     return {};
 }
 
