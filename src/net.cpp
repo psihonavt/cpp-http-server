@@ -1,13 +1,15 @@
 #include "net.h"
 #include "config/server.h"
 #include "utils/logging.h"
-#include <algorithm>
 #include <arpa/inet.h>
 #include <cstddef>
 #include <cstring>
+#include <format>
 #include <netinet/in.h>
+#include <stdexcept>
 #include <sys/poll.h>
 #include <sys/socket.h>
+#include <vector>
 
 std::pair<std::string, std::string> get_ip_and_hostname(addrinfo* ai)
 {
@@ -46,46 +48,77 @@ std::string get_ip_address(sockaddr_storage* ss)
     return std::string { ip };
 }
 
+void PfdsHolder::ensure_fd_exists(int fd)
+{
+    if (!m_index_map.contains(fd)) {
+        auto msg { std::format("{} descriptor doesn't exist", fd) };
+        throw std::runtime_error { msg };
+    }
+}
+
 void PfdsHolder::add_fd(int newfd, short events)
 {
+    if (m_index_map.contains(newfd)) {
+        auto msg { std::format("{} descriptor already exists", newfd) };
+        throw std::runtime_error { msg };
+    }
     m_pfds.emplace_back(newfd, events, 0);
+    m_index_map[newfd] = m_pfds.size() - 1;
 }
 
 void PfdsHolder::remove_fd(int fd)
 {
-    auto found { std::find_if(m_pfds.begin(), m_pfds.end(), [&fd](pollfd const& pfd) -> bool { return pfd.fd == fd; }) };
-    if (found != m_pfds.end()) {
-        m_pfds.erase(found);
+    ensure_fd_exists(fd);
+    auto idx { m_index_map.at(fd) };
+    auto last { m_pfds.size() - 1 };
+    if (idx != last) {
+        m_pfds[idx] = std::move(m_pfds[last]);
+        m_index_map[m_pfds[idx].fd] = idx;
     }
-}
-
-nfds_t PfdsHolder::size()
-{
-    return static_cast<nfds_t>(m_pfds.size());
-}
-
-pollfd* PfdsHolder::c_array()
-{
-    return m_pfds.data();
-}
-
-std::vector<pollfd> PfdsHolder::get_fds_copy()
-{
-    return m_pfds;
+    m_pfds.pop_back();
+    m_index_map.erase(fd);
 }
 
 void PfdsHolder::add_fd_events(int fd, short events)
 {
-    auto found { std::find_if(m_pfds.begin(), m_pfds.end(), [&fd](pollfd const& pfd) -> bool { return pfd.fd == fd; }) };
-    if (found != m_pfds.end()) {
-        (*found).events |= events;
-    }
+    ensure_fd_exists(fd);
+    auto& pfd { m_pfds[static_cast<size_t>(m_index_map.at(fd))] };
+    pfd.events |= events;
 }
 
 void PfdsHolder::remove_fd_events(int fd, short events)
 {
-    auto found { std::find_if(m_pfds.begin(), m_pfds.end(), [&fd](pollfd const& pfd) -> bool { return pfd.fd == fd; }) };
-    if (found != m_pfds.end()) {
-        (*found).events &= ~events;
+    ensure_fd_exists(fd);
+    auto& pfd { m_pfds[static_cast<size_t>(m_index_map.at(fd))] };
+    pfd.events &= ~events;
+}
+
+int PfdsHolder::do_poll()
+{
+    return poll(m_pfds.data(), static_cast<nfds_t>(m_pfds.size()), -1);
+}
+
+std::vector<pollfd> const& PfdsHolder::all()
+{
+    return m_pfds;
+}
+
+void PfdsHolder::handle_change(PfdsChange const& change)
+{
+    switch (change.action) {
+    case PfdsChangeAction::Add:
+        add_fd(change.fd, change.events);
+        return;
+    case PfdsChangeAction::Remove:
+        remove_fd(change.fd);
+        return;
+    case PfdsChangeAction::AddEvents:
+        add_fd_events(change.fd, change.events);
+        return;
+    case PfdsChangeAction::RemoveEvents:
+        remove_fd_events(change.fd, change.events);
+        return;
+    default:
+        return;
     }
 }

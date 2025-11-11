@@ -3,9 +3,11 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <string>
+#include <sys/_types/_ssize_t.h>
 #include <sys/poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -53,15 +55,30 @@ public:
     }
 };
 
+enum class PfdsChangeAction {
+    Add,
+    Remove,
+    AddEvents,
+    RemoveEvents
+};
+
+struct PfdsChange {
+    int fd;
+    PfdsChangeAction action;
+    short events {};
+};
+
 class PfdsHolder {
     std::vector<pollfd> m_pfds {};
-
-public:
+    std::unordered_map<int, size_t> m_index_map {};
+    void ensure_fd_exists(int fd);
     void add_fd(int newfd, short events);
     void remove_fd(int fd);
     void add_fd_events(int fd, short events);
     void remove_fd_events(int fd, short events);
-    nfds_t size();
-    pollfd* c_array();
-    std::vector<pollfd> get_fds_copy();
+
+public:
+    void handle_change(PfdsChange const& change);
+    int do_poll();
+    std::vector<pollfd> const& all();
 };
