@@ -374,8 +374,7 @@ void handle_signal_event()
 
 void process_connections(ServerContext& ctx)
 {
-    auto pfds_holder_copy { ctx.pfds };
-    for (auto const pfd : pfds_holder_copy.get_fds_copy()) {
+    for (auto const pfd : ctx.pfds.get_fds_copy()) {
         if (pfd.revents & (POLLIN | POLLHUP)) {
 
             if (pfd.fd == ctx.server) {
