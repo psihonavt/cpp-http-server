@@ -257,10 +257,6 @@ std::optional<PfdsChange> establish_connection(ServerContext& ctx)
     socklen_t their_addr_len { sizeof(their_address) };
     Socket client_socket { accept(ctx.server, reinterpret_cast<sockaddr*>(&their_address), &their_addr_len) };
 
-    int s_flags { fcntl(client_socket, F_GETFL) };
-    if (s_flags == -1 || fcntl(client_socket, F_SETFL, s_flags | O_NONBLOCK) != 0) {
-        LOG_ERROR("Failed to mark client socket as non-blocking: {}", strerror(errno));
-    }
     if (client_socket == -1) {
         if (errno == EINTR || errno == ECONNABORTED) {
             return {};
@@ -268,6 +264,10 @@ std::optional<PfdsChange> establish_connection(ServerContext& ctx)
         LOG_ERROR("Failed to accept a connection: {}", strerror(errno));
     }
 
+    int s_flags { fcntl(client_socket, F_GETFL) };
+    if (s_flags == -1 || fcntl(client_socket, F_SETFL, s_flags | O_NONBLOCK) != 0) {
+        LOG_ERROR("Failed to mark client socket as non-blocking: {}", strerror(errno));
+    }
     int client_fd { static_cast<int>(client_socket) };
     char* read_buf = new char[Config::Server::RECV_BUFFER_SIZE];
     auto connection_id = std::chrono::system_clock::now().time_since_epoch().count();
@@ -376,9 +376,8 @@ void handle_signal_event()
 void process_connections(ServerContext& ctx)
 {
     std::vector<std::optional<PfdsChange>> changes {};
-    // just a random number for now
-    changes.reserve(30);
-    for (auto const pfd : ctx.pfds.all()) {
+    changes.reserve(ctx.pfds.all().size() / 2);
+    for (auto const& pfd : ctx.pfds.all()) {
         if (pfd.revents & (POLLIN | POLLHUP)) {
 
             if (pfd.fd == ctx.server) {

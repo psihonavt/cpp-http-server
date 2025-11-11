@@ -2,11 +2,11 @@
 #include "config/server.h"
 #include "utils/logging.h"
 #include <arpa/inet.h>
+#include <cassert>
 #include <cstddef>
 #include <cstring>
 #include <format>
 #include <netinet/in.h>
-#include <stdexcept>
 #include <sys/poll.h>
 #include <sys/socket.h>
 #include <vector>
@@ -50,19 +50,13 @@ std::string get_ip_address(sockaddr_storage* ss)
 
 void PfdsHolder::ensure_fd_exists(int fd)
 {
-    if (!m_index_map.contains(fd)) {
-        auto msg { std::format("{} descriptor doesn't exist", fd) };
-        throw std::runtime_error { msg };
-    }
+    assert(m_index_map.contains(fd) && std::format("{} descriptor doesn't exist", fd).c_str());
 }
 
 void PfdsHolder::add_fd(int newfd, short events)
 {
-    if (m_index_map.contains(newfd)) {
-        auto msg { std::format("{} descriptor already exists", newfd) };
-        throw std::runtime_error { msg };
-    }
-    m_pfds.emplace_back(newfd, events, 0);
+    assert(!m_index_map.contains(newfd) && std::format("fd {} already exists", newfd).c_str());
+    m_pfds.emplace_back(pollfd { .fd = newfd, .events = events, .revents = 0 });
     m_index_map[newfd] = m_pfds.size() - 1;
 }
 
@@ -119,6 +113,6 @@ void PfdsHolder::handle_change(PfdsChange const& change)
         remove_fd_events(change.fd, change.events);
         return;
     default:
-        return;
+        assert(false && "unexpected action");
     }
 }

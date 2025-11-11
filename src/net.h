@@ -3,7 +3,6 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <string>
-#include <sys/_types/_ssize_t.h>
 #include <sys/poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
