@@ -6,7 +6,9 @@
 #include <sys/poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <unordered_map>
 #include <utility>
+#include <vector>
 
 std::pair<std::string, std::string> get_ip_and_hostname(addrinfo* ai);
 std::string get_ip_address(sockaddr_storage* ss);
@@ -52,5 +54,30 @@ public:
     }
 };
 
-void add_to_pfds(pollfd** pfds, int newfd, unsigned int* fd_count, size_t* fd_size);
-void del_from_pfds(pollfd** pfds, int fd, unsigned int* fd_count, size_t* fd_size);
+enum class PfdsChangeAction {
+    Add,
+    Remove,
+    AddEvents,
+    RemoveEvents
+};
+
+struct PfdsChange {
+    int fd;
+    PfdsChangeAction action;
+    short events {};
+};
+
+class PfdsHolder {
+    std::vector<pollfd> m_pfds {};
+    std::unordered_map<int, size_t> m_index_map {};
+    void ensure_fd_exists(int fd);
+    void add_fd(int newfd, short events);
+    void remove_fd(int fd);
+    void add_fd_events(int fd, short events);
+    void remove_fd_events(int fd, short events);
+
+public:
+    void handle_change(PfdsChange const& change);
+    int do_poll();
+    std::vector<pollfd> const& all();
+};

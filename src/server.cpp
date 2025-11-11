@@ -22,6 +22,7 @@
 #include <map>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <optional>
 #include <poll.h>
 #include <string>
 #include <sys/fcntl.h>
@@ -31,6 +32,7 @@
 #include <system_error>
 #include <unistd.h>
 #include <utility>
+#include <vector>
 
 namespace Globals {
 int s_singnal_pipe_wfd { -1 };
@@ -184,10 +186,8 @@ struct Connection {
 struct ServerContext {
     Socket const& server;
     std::filesystem::path const& server_root;
-    pollfd** pfds;
-    size_t* fd_size;
-    uint* fd_count;
     std::map<int, Connection> connections;
+    PfdsHolder pfds;
 };
 
 Socket start_server(int port)
@@ -251,58 +251,56 @@ Socket start_server(int port)
     return std::move(*server_socket);
 }
 
-void establish_connection(ServerContext& ctx)
+std::optional<PfdsChange> establish_connection(ServerContext& ctx)
 {
     sockaddr_storage their_address;
     socklen_t their_addr_len { sizeof(their_address) };
     Socket client_socket { accept(ctx.server, reinterpret_cast<sockaddr*>(&their_address), &their_addr_len) };
 
-    int s_flags { fcntl(client_socket, F_GETFL) };
-    if (s_flags == -1 || fcntl(client_socket, F_SETFL, s_flags | O_NONBLOCK) != 0) {
-        LOG_ERROR("Failed to mark client socket as non-blocking: {}", strerror(errno));
-    }
     if (client_socket == -1) {
         if (errno == EINTR || errno == ECONNABORTED) {
-            return;
+            return {};
         }
         LOG_ERROR("Failed to accept a connection: {}", strerror(errno));
     }
 
+    int s_flags { fcntl(client_socket, F_GETFL) };
+    if (s_flags == -1 || fcntl(client_socket, F_SETFL, s_flags | O_NONBLOCK) != 0) {
+        LOG_ERROR("Failed to mark client socket as non-blocking: {}", strerror(errno));
+    }
     int client_fd { static_cast<int>(client_socket) };
     char* read_buf = new char[Config::Server::RECV_BUFFER_SIZE];
     auto connection_id = std::chrono::system_clock::now().time_since_epoch().count();
     ctx.connections.emplace(
         client_fd,
         Connection { .client = std::move(client_socket), .connection_id = connection_id, .read_buf = read_buf, .bytes_read_need = Config::Server::RECV_BUFFER_SIZE - 1 });
-    add_to_pfds(ctx.pfds, client_fd, ctx.fd_count, ctx.fd_size);
-    LOG_INFO("Polling a new connection from {} on socket {}", get_ip_address(&their_address), client_fd);
+    return PfdsChange { .fd = client_fd, .action = PfdsChangeAction::Add, .events = (POLLHUP | POLLIN) };
 }
 
-void handle_recv_events(ServerContext& ctx, size_t* pfd_i)
+std::optional<PfdsChange> handle_recv_events(ServerContext& ctx, int sender_fd)
 {
-    int sender_fd { (*ctx.pfds)[*pfd_i].fd };
     if (!ctx.connections.contains(sender_fd)) {
         LOG_ERROR("No connection found for socket {}!", sender_fd);
-        return;
+        return {};
     }
     auto& connection { ctx.connections.at(sender_fd) };
     auto n = recv(sender_fd, connection.read_buf + connection.bytes_read_so_far, static_cast<size_t>(connection.bytes_read_need), 0);
 
     if (n == 0) {
         LOG_INFO("Client on socket {} closed the connection. Cleaning up ...", sender_fd);
-        del_from_pfds(ctx.pfds, sender_fd, ctx.fd_count, ctx.fd_size);
-        delete connection.read_buf;
+        delete[] connection.read_buf;
+        delete[] connection.send_buf;
         ctx.connections.erase(sender_fd);
-        return;
+        return PfdsChange { .fd = sender_fd, .action = PfdsChangeAction::Remove };
     } else if (n < 0) {
         if (errno == EINTR || errno == ECONNABORTED) {
-            return;
+            return {};
         }
         LOG_WARN("Error receiving data on socket {}: {}. Cleaning up ...", sender_fd, strerror(errno));
-        del_from_pfds(ctx.pfds, sender_fd, ctx.fd_count, ctx.fd_size);
-        delete connection.read_buf;
+        delete[] connection.read_buf;
+        delete[] connection.send_buf;
         ctx.connections.erase(sender_fd);
-        return;
+        return PfdsChange { .fd = sender_fd, .action = PfdsChangeAction::Remove };
     } else {
         connection.bytes_read_need -= n;
         connection.bytes_read_so_far += n;
@@ -312,43 +310,38 @@ void handle_recv_events(ServerContext& ctx, size_t* pfd_i)
             auto response = handle_http_request(request, ctx.server_root);
             connection.responses_queue.push_back(response);
             connection.reset_read_buffer();
-            LOG_INFO("[{}] socket {} - number of queued responses {}", connection.connection_id, sender_fd, connection.responses_queue.size());
-            (*ctx.pfds)[*pfd_i].events |= POLLOUT;
-        } else {
-            // std::string p_buffer { connection.read_buf };
-            // LOG_INFO("socket {}: read {} bytes, need more {} bytes. So far: {}", sender_fd, connection.bytes_read_so_far, connection.bytes_read_need, p_buffer);
+            LOG_DEBUG("[{}] socket {} - number of queued responses {}", connection.connection_id, sender_fd, connection.responses_queue.size());
+            return PfdsChange { .fd = sender_fd, .action = PfdsChangeAction::AddEvents, .events = POLLOUT };
         }
-        return;
+        return {};
     }
 }
 
-void handle_send_events(ServerContext& ctx, size_t* pfd_i)
+std::optional<PfdsChange> handle_send_events(ServerContext& ctx, int receiver_fd)
 {
-    int receiver_fd { (*ctx.pfds)[*pfd_i].fd };
     if (!ctx.connections.contains(receiver_fd)) {
         LOG_ERROR("No connection found for socket {}!", receiver_fd);
-        return;
+        return {};
     }
 
     auto& connection { ctx.connections.at(receiver_fd) };
 
     if (connection.responses_queue.empty() && !connection.send_buf) {
         LOG_WARN("socket {} got POLLOUT but there is nothing to send ...", receiver_fd);
-        return;
+        return {};
     }
 
     connection.prepare_send_buffer();
     auto n = send(receiver_fd, connection.send_buf + connection.bytes_sent_so_far, static_cast<size_t>(connection.bytes_send_need), 0);
     if (n == -1) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            return;
+            return {};
         } else {
             LOG_ERROR("[{}] socket {} error send: {}", connection.connection_id, receiver_fd, strerror(errno));
-            del_from_pfds(ctx.pfds, receiver_fd, ctx.fd_count, ctx.fd_size);
-            delete connection.read_buf;
-            delete connection.send_buf;
+            delete[] connection.read_buf;
+            delete[] connection.send_buf;
             ctx.connections.erase(receiver_fd);
-            return;
+            return PfdsChange { .fd = receiver_fd, .action = PfdsChangeAction::Remove };
         }
     }
     connection.bytes_sent_so_far += n;
@@ -357,11 +350,12 @@ void handle_send_events(ServerContext& ctx, size_t* pfd_i)
         LOG_INFO("[{}] socket {} sent the entire response", connection.connection_id, receiver_fd);
         connection.reset_send_buffer();
         if (connection.responses_queue.empty()) {
-            (*ctx.pfds)[*pfd_i].events &= ~POLLOUT;
+            return PfdsChange { .fd = receiver_fd, .action = PfdsChangeAction::RemoveEvents, .events = POLLOUT };
         }
-        return;
+        return {};
     }
-    LOG_INFO("[{}] s {}/{} to socket {}", connection.connection_id, connection.bytes_sent_so_far, connection.bytes_sent_so_far + connection.bytes_send_need, receiver_fd);
+    LOG_DEBUG("[{}] s {}/{} to socket {}", connection.connection_id, connection.bytes_sent_so_far, connection.bytes_sent_so_far + connection.bytes_send_need, receiver_fd);
+    return {};
 }
 
 void handle_signal_event()
@@ -381,19 +375,27 @@ void handle_signal_event()
 
 void process_connections(ServerContext& ctx)
 {
-    for (size_t i { 0 }; i < *ctx.fd_count; ++i) {
-        auto fd { (*ctx.pfds)[i] };
-        if (fd.revents & (POLLIN | POLLHUP)) {
-            if (fd.fd == ctx.server) {
-                establish_connection(ctx);
-            } else if (fd.fd == Globals::s_singnal_pipe_rfd) {
+    std::vector<std::optional<PfdsChange>> changes {};
+    changes.reserve(ctx.pfds.all().size() / 2);
+    for (auto const& pfd : ctx.pfds.all()) {
+        if (pfd.revents & (POLLIN | POLLHUP)) {
+
+            if (pfd.fd == ctx.server) {
+                changes.push_back(establish_connection(ctx));
+            } else if (pfd.fd == Globals::s_singnal_pipe_rfd) {
                 handle_signal_event();
             } else {
-                handle_recv_events(ctx, &i);
+                changes.push_back(handle_recv_events(ctx, pfd.fd));
             }
         }
-        if (fd.revents & POLLOUT) {
-            handle_send_events(ctx, &i);
+        if (pfd.revents & POLLOUT) {
+            changes.push_back(handle_send_events(ctx, pfd.fd));
+        }
+    }
+
+    for (auto const& pfd_change : changes) {
+        if (pfd_change) {
+            ctx.pfds.handle_change(*pfd_change);
         }
     }
 }
@@ -412,33 +414,23 @@ int main(int argc, char** argv)
 
     setup_logging();
     setup_signal_handling();
+    assert(Globals::s_singnal_pipe_rfd != -1 && "read signal pipe must be initialized.");
     LOG_INFO("Starting the server ...");
     auto server_socket { start_server(port) };
 
-    size_t fd_size { 200 };
-    uint fd_count { 0 };
-    auto pfds { new pollfd[fd_size] };
-
-    pfds[0].fd = server_socket;
-    pfds[0].events = POLLIN;
-
-    assert(Globals::s_singnal_pipe_rfd != -1 && "read signal pipe must be initialized.");
-    pfds[1].fd = Globals::s_singnal_pipe_rfd;
-    pfds[1].events = POLLIN;
-
-    fd_count += 2;
+    PfdsHolder pfds {};
+    pfds.handle_change(PfdsChange { .fd = server_socket, .action = PfdsChangeAction::Add, .events = POLLIN });
+    pfds.handle_change(PfdsChange { .fd = Globals::s_singnal_pipe_rfd, .action = PfdsChangeAction::Add, .events = POLLIN });
 
     ServerContext ctx {
         .server = server_socket,
         .server_root = server_root,
-        .pfds = &pfds,
-        .fd_size = &fd_size,
-        .fd_count = &fd_count,
         .connections = {},
+        .pfds = std::move(pfds),
     };
 
     while (true) {
-        int poll_count { poll(pfds, fd_count, -1) };
+        int poll_count { ctx.pfds.do_poll() };
         if (poll_count == -1) {
             LOG_ERROR("Polling failed: {}", strerror(errno));
             // maybe there is something in our signal pipe, read and display it
@@ -449,7 +441,6 @@ int main(int argc, char** argv)
         process_connections(ctx);
     }
 
-    delete[] pfds;
     close(Globals::s_singnal_pipe_rfd);
     close(Globals::s_singnal_pipe_wfd);
     close(server_socket);
