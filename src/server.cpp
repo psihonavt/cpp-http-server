@@ -375,7 +375,7 @@ void handle_signal_event()
 void process_connections(ServerContext& ctx)
 {
     auto pfds_holder_copy { ctx.pfds };
-    for (auto const pfd : pfds_holder_copy.all()) {
+    for (auto const pfd : pfds_holder_copy.get_fds_copy()) {
         if (pfd.revents & (POLLIN | POLLHUP)) {
 
             if (pfd.fd == ctx.server) {
@@ -419,12 +419,11 @@ int main(int argc, char** argv)
         .server = server_socket,
         .server_root = server_root,
         .connections = {},
-        .pfds = pfds,
+        .pfds = std::move(pfds),
     };
 
     while (true) {
         int poll_count { poll(ctx.pfds.c_array(), ctx.pfds.size(), -1) };
-        LOG_INFO("Got a poll event ...");
         if (poll_count == -1) {
             LOG_ERROR("Polling failed: {}", strerror(errno));
             // maybe there is something in our signal pipe, read and display it

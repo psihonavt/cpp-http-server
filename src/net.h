@@ -63,5 +63,5 @@ public:
     void remove_fd_events(int fd, short events);
     nfds_t size();
     pollfd* c_array();
-    std::vector<pollfd>& all();
+    std::vector<pollfd> get_fds_copy();
 };

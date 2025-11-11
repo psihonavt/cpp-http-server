@@ -69,7 +69,7 @@ pollfd* PfdsHolder::c_array()
     return m_pfds.data();
 }
 
-std::vector<pollfd>& PfdsHolder::all()
+std::vector<pollfd> PfdsHolder::get_fds_copy()
 {
     return m_pfds;
 }
