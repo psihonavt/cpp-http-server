@@ -1,7 +1,6 @@
 #include "config/server.h"
 #include "CLI/CLI.hpp"
 #include "http/http.h"
-#include "http/parser.h"
 #include "net.h"
 #include "utils/files.h"
 #include "utils/logging.h"
@@ -14,12 +13,11 @@
 #include <chrono>
 #include <csignal>
 #include <cstddef>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
 #include <iostream>
-#include <map>
+#include <memory>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <optional>
@@ -39,14 +37,7 @@ int s_singnal_pipe_wfd { -1 };
 int s_singnal_pipe_rfd { -1 };
 };
 
-std::pair<bool, HttpRequest> parse_http_request(char const* data, size_t datalen)
-{
-    HttpRequest req {};
-    bool is_finished { parse_http_request(data, datalen, &req) };
-    return { is_finished, std::move(req) };
-}
-
-std::string handle_http_request(HttpRequest const& req, std::filesystem::path const& server_root)
+HttpResponse handle_http_request(HttpRequest const& req, std::filesystem::path const& server_root)
 {
     HttpResponse resp;
     if (req.method == "") {
@@ -60,9 +51,7 @@ std::string handle_http_request(HttpRequest const& req, std::filesystem::path co
                     .status = ResponseCode::INTERNAL_SERVER_ERROR,
                     .http_version = req.version,
                     .headers = {},
-                    .entity = HttpEntity {
-                        .headers = { HttpHeader { "Content-Type", "text/plain" } },
-                        .body = maybe_file.error },
+                    .entity = std::make_unique<HttpEntity>("text/plain", maybe_file.error),
                 };
             } else {
                 resp = HttpResponse {
@@ -76,13 +65,11 @@ std::string handle_http_request(HttpRequest const& req, std::filesystem::path co
                 .status = ResponseCode::OK,
                 .http_version = req.version,
                 .headers = {},
-                .entity = HttpEntity {
-                    .headers = { HttpHeader { "Content-Type", maybe_file.mime_type } },
-                    .body = maybe_file.content }
+                .entity = std::make_unique<HttpEntity>(maybe_file.mime_type, std::move(maybe_file.content), maybe_file.size),
             };
         }
     }
-    return resp.write();
+    return resp;
 }
 
 void signals_handler(int sig)
@@ -141,52 +128,90 @@ struct Connection {
     Socket client;
     long long connection_id;
 
-    std::vector<std::string> responses_queue {};
+    std::vector<HttpResponse> responses_queue {};
+    std::optional<HttpResponseWriter> cur_response_writer {};
 
-    char* send_buf { nullptr };
-    ssize_t bytes_send_need { 0 };
-    ssize_t bytes_sent_so_far { 0 };
+    std::vector<HttpRequest> requests_queue {};
+    std::optional<HttpRequestReader> request_reader {};
 
-    char* read_buf { nullptr };
-    ssize_t bytes_read_need { 0 };
-    ssize_t bytes_read_so_far { 0 };
-
-    void reset_send_buffer()
+    void setup_response_writer()
     {
-        delete[] send_buf;
-        send_buf = nullptr;
-        bytes_send_need = 0;
-        bytes_sent_so_far = 0;
-    }
-
-    void reset_read_buffer()
-    {
-        delete[] read_buf;
-        read_buf = nullptr;
-        bytes_read_need = 0;
-        bytes_read_so_far = 0;
-    }
-
-    void prepare_send_buffer()
-    {
-        if (send_buf) {
+        if (cur_response_writer && !cur_response_writer->is_done_sending()) {
             return;
         }
 
-        assert(!responses_queue.empty() && "Response queue mustn't be empty at this point!");
+        if (responses_queue.empty()) {
+            LOG_ERROR("Responses queue must not be empty at this point!");
+            return;
+        }
 
-        auto response = responses_queue[0];
-        send_buf = new char[response.size()];
-        std::copy(response.begin(), response.end(), send_buf);
-        bytes_send_need = static_cast<ssize_t>(response.size());
-        responses_queue.erase(responses_queue.begin());
+        // writer assumes the ownership of all smarter poiners pointing to the content inside of a HttpResponse object
+        cur_response_writer = make_response_writer(responses_queue.back());
+        responses_queue.pop_back();
+    }
+
+    bool is_sending()
+    {
+        if (!responses_queue.empty() && !cur_response_writer) {
+            setup_response_writer();
+            return true;
+        }
+
+        if (responses_queue.empty() && cur_response_writer && cur_response_writer->is_done_sending()) {
+            return false;
+        }
+        return true;
+    }
+
+    bool send_pending()
+    {
+        setup_response_writer();
+        assert(cur_response_writer);
+
+        auto status { cur_response_writer->write_response(client) };
+        switch (status) {
+        case HttpRequestReadWriteStatus::Finished:
+            return true;
+        case HttpRequestReadWriteStatus::Error:
+            LOG_ERROR("[{}] socket {} error send: {}", connection_id, client.fd(), strerror(errno));
+            return false;
+        case HttpRequestReadWriteStatus::NeedContinue:
+            return true;
+        case HttpRequestReadWriteStatus::ConnectionClosed:
+        default:
+            assert(false);
+        }
+    }
+
+    bool read_pending()
+    {
+        if (!request_reader) {
+            request_reader = make_request_reader(Config::Server::RECV_BUFFER_SIZE);
+        }
+        auto [status, maybe_request] = request_reader->read_request(client);
+        switch (status) {
+        case HttpRequestReadWriteStatus::ConnectionClosed:
+            LOG_INFO("[{}] socket {} conenction closed by the peer.", connection_id, client.fd());
+            return false;
+        case HttpRequestReadWriteStatus::NeedContinue:
+            return true;
+        case HttpRequestReadWriteStatus::Finished:
+            assert(maybe_request);
+            requests_queue.push_back(std::move(*maybe_request));
+            return true;
+        case HttpRequestReadWriteStatus::Error:
+            LOG_ERROR("[{}] socket {} error recv: {}", connection_id, client.fd(), strerror(errno));
+            return false;
+        default:
+            assert(false);
+        }
     }
 };
 
 struct ServerContext {
     Socket const& server;
     std::filesystem::path const& server_root;
-    std::map<int, Connection> connections;
+    std::unordered_map<int, Connection> connections;
     PfdsHolder pfds;
 };
 
@@ -267,13 +292,14 @@ std::optional<PfdsChange> establish_connection(ServerContext& ctx)
     int s_flags { fcntl(client_socket, F_GETFL) };
     if (s_flags == -1 || fcntl(client_socket, F_SETFL, s_flags | O_NONBLOCK) != 0) {
         LOG_ERROR("Failed to mark client socket as non-blocking: {}", strerror(errno));
+        return {};
     }
-    int client_fd { static_cast<int>(client_socket) };
-    char* read_buf = new char[Config::Server::RECV_BUFFER_SIZE];
+
+    int client_fd { client_socket.fd() };
     auto connection_id = std::chrono::system_clock::now().time_since_epoch().count();
-    ctx.connections.emplace(
-        client_fd,
-        Connection { .client = std::move(client_socket), .connection_id = connection_id, .read_buf = read_buf, .bytes_read_need = Config::Server::RECV_BUFFER_SIZE - 1 });
+    auto connection = Connection { .client = std::move(client_socket), .connection_id = connection_id };
+    ctx.connections.emplace(client_fd, std::move(connection));
+    LOG_INFO("[{}] socket {}: connection established", connection_id, client_fd);
     return PfdsChange { .fd = client_fd, .action = PfdsChangeAction::Add, .events = (POLLHUP | POLLIN) };
 }
 
@@ -284,36 +310,21 @@ std::optional<PfdsChange> handle_recv_events(ServerContext& ctx, int sender_fd)
         return {};
     }
     auto& connection { ctx.connections.at(sender_fd) };
-    auto n = recv(sender_fd, connection.read_buf + connection.bytes_read_so_far, static_cast<size_t>(connection.bytes_read_need), 0);
 
-    if (n == 0) {
-        LOG_INFO("Client on socket {} closed the connection. Cleaning up ...", sender_fd);
-        delete[] connection.read_buf;
-        delete[] connection.send_buf;
-        ctx.connections.erase(sender_fd);
-        return PfdsChange { .fd = sender_fd, .action = PfdsChangeAction::Remove };
-    } else if (n < 0) {
-        if (errno == EINTR || errno == ECONNABORTED) {
+    if (connection.read_pending()) {
+        if (!connection.requests_queue.empty()) {
+            HttpRequest& request = connection.requests_queue.back();
+            LOG_INFO("[{}] socket {} received a HTTP request: {}", connection.connection_id, sender_fd, request.uri.path);
+            auto response = handle_http_request(request, ctx.server_root);
+            connection.responses_queue.push_back(std::move(response));
+            connection.requests_queue.pop_back();
+            return PfdsChange { .fd = sender_fd, .action = PfdsChangeAction::AddEvents, .events = POLLOUT };
+        } else {
             return {};
         }
-        LOG_WARN("Error receiving data on socket {}: {}. Cleaning up ...", sender_fd, strerror(errno));
-        delete[] connection.read_buf;
-        delete[] connection.send_buf;
+    } else {
         ctx.connections.erase(sender_fd);
         return PfdsChange { .fd = sender_fd, .action = PfdsChangeAction::Remove };
-    } else {
-        connection.bytes_read_need -= n;
-        connection.bytes_read_so_far += n;
-        auto [request_finished, request] = parse_http_request(connection.read_buf, static_cast<size_t>(connection.bytes_read_so_far));
-        if (request_finished) {
-            LOG_INFO("[{}] Received a complete HTTP request on socket {}: {}", connection.connection_id, sender_fd, request.uri.path);
-            auto response = handle_http_request(request, ctx.server_root);
-            connection.responses_queue.push_back(response);
-            connection.reset_read_buffer();
-            LOG_DEBUG("[{}] socket {} - number of queued responses {}", connection.connection_id, sender_fd, connection.responses_queue.size());
-            return PfdsChange { .fd = sender_fd, .action = PfdsChangeAction::AddEvents, .events = POLLOUT };
-        }
-        return {};
     }
 }
 
@@ -326,35 +337,24 @@ std::optional<PfdsChange> handle_send_events(ServerContext& ctx, int receiver_fd
 
     auto& connection { ctx.connections.at(receiver_fd) };
 
-    if (connection.responses_queue.empty() && !connection.send_buf) {
+    if (connection.responses_queue.empty() && !connection.cur_response_writer) {
         LOG_WARN("socket {} got POLLOUT but there is nothing to send ...", receiver_fd);
         return {};
     }
 
-    connection.prepare_send_buffer();
-    auto n = send(receiver_fd, connection.send_buf + connection.bytes_sent_so_far, static_cast<size_t>(connection.bytes_send_need), 0);
-    if (n == -1) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            return {};
-        } else {
-            LOG_ERROR("[{}] socket {} error send: {}", connection.connection_id, receiver_fd, strerror(errno));
-            delete[] connection.read_buf;
-            delete[] connection.send_buf;
+    if (connection.is_sending()) {
+        bool is_success = connection.send_pending();
+        if (!is_success) {
             ctx.connections.erase(receiver_fd);
             return PfdsChange { .fd = receiver_fd, .action = PfdsChangeAction::Remove };
         }
-    }
-    connection.bytes_sent_so_far += n;
-    connection.bytes_send_need -= n;
-    if (connection.bytes_send_need == 0) {
-        LOG_INFO("[{}] socket {} sent the entire response", connection.connection_id, receiver_fd);
-        connection.reset_send_buffer();
-        if (connection.responses_queue.empty()) {
+
+        if (!connection.is_sending()) {
+            LOG_INFO("[{}] socket {} sent the entire response", connection.connection_id, receiver_fd);
             return PfdsChange { .fd = receiver_fd, .action = PfdsChangeAction::RemoveEvents, .events = POLLOUT };
         }
-        return {};
     }
-    LOG_DEBUG("[{}] s {}/{} to socket {}", connection.connection_id, connection.bytes_sent_so_far, connection.bytes_sent_so_far + connection.bytes_send_need, receiver_fd);
+
     return {};
 }
 
@@ -379,7 +379,6 @@ void process_connections(ServerContext& ctx)
     changes.reserve(ctx.pfds.all().size() / 2);
     for (auto const& pfd : ctx.pfds.all()) {
         if (pfd.revents & (POLLIN | POLLHUP)) {
-
             if (pfd.fd == ctx.server) {
                 changes.push_back(establish_connection(ctx));
             } else if (pfd.fd == Globals::s_singnal_pipe_rfd) {
@@ -404,7 +403,8 @@ int main(int argc, char** argv)
 {
     CLI::App app { "Best HTTP Server" };
     int port { Config::Server::DEFAULT_PORT };
-    std::filesystem::path server_root { "/Users/cake-icing/tmp/cpp/learncpp/www.learncpp.com/" };
+    // std::filesystem::path server_root { "/Users/cake-icing/tmp/cpp/learncpp/www.learncpp.com/" };
+    std::filesystem::path server_root { "/Users/cake-icing/tmp/dad70/dad70" };
     int listen_backlog { Config::Server::LISTEN_BACKLOG };
     app.add_option("-p, --port", port, "server port");
     app.add_option("-r, --server-root", server_root, "server root (serve files from here)");
@@ -443,7 +443,6 @@ int main(int argc, char** argv)
 
     close(Globals::s_singnal_pipe_rfd);
     close(Globals::s_singnal_pipe_wfd);
-    close(server_socket);
 
     return 0;
 }

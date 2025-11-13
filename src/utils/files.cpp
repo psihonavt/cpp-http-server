@@ -3,9 +3,9 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <ios>
 #include <iostream>
-#include <iterator>
-#include <string>
+#include <memory>
 
 namespace fs = std::filesystem;
 
@@ -38,11 +38,15 @@ FileResponse serve_file(std::string_view request_path, fs::path const& server_ro
         if (!file) {
             return FileResponse { .is_success = false, .error = "Cannot read the file" };
         }
+        file.seekg(0, std::ios::end);
+        std::streamsize fsize { file.tellg() };
+        file.seekg(0);
+        size_t size { static_cast<size_t>(fsize) };
+        auto content { std::make_unique<char[]>(size) };
+        file.read(content.get(), fsize);
 
-        std::string content { std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>() };
         auto mime_type { get_mime_type(requested_cannonical.filename().string()) };
-
-        return FileResponse { .is_success = true, .content = std::move(content), .mime_type = mime_type };
+        return FileResponse { .is_success = true, .content = std::move(content), .size = size, .mime_type = mime_type };
     } catch (fs::filesystem_error const& e) {
         return FileResponse { .is_success = false, .error = e.what(), .error_code = e.code() };
     }

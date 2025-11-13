@@ -2,9 +2,10 @@
 #line 1 "src/http/parser.rl"
 #include "parser.h"
 #include <cstring>
+#include <memory>
 
 
-#line 8 "src/http/parser.cpp"
+#line 9 "src/http/parser.cpp"
 static const int http_parser_start = 1;
 static const int http_parser_first_final = 75;
 static const int http_parser_error = 0;
@@ -12,7 +13,7 @@ static const int http_parser_error = 0;
 static const int http_parser_en_main = 1;
 
 
-#line 105 "src/http/parser.rl"
+#line 106 "src/http/parser.rl"
 
 
 bool parse_http_request(char const* data, size_t len, HttpRequest* result) {
@@ -28,14 +29,14 @@ bool parse_http_request(char const* data, size_t len, HttpRequest* result) {
     const char* mark = nullptr;
     
     
-#line 32 "src/http/parser.cpp"
+#line 33 "src/http/parser.cpp"
 	{
 	cs = http_parser_start;
 	}
 
-#line 120 "src/http/parser.rl"
+#line 121 "src/http/parser.rl"
     
-#line 39 "src/http/parser.cpp"
+#line 40 "src/http/parser.cpp"
 	{
 	if ( p == pe )
 		goto _test_eof;
@@ -54,7 +55,7 @@ st0:
 cs = 0;
 	goto _out;
 tr0:
-#line 8 "src/http/parser.rl"
+#line 9 "src/http/parser.rl"
 	{
   mark = p;
 }
@@ -63,7 +64,7 @@ st2:
 	if ( ++p == pe )
 		goto _test_eof2;
 case 2:
-#line 67 "src/http/parser.cpp"
+#line 68 "src/http/parser.cpp"
 	if ( (*p) == 69 )
 		goto st3;
 	goto st0;
@@ -103,7 +104,7 @@ case 7:
 		goto tr11;
 	goto st0;
 tr11:
-#line 16 "src/http/parser.rl"
+#line 17 "src/http/parser.rl"
 	{
   ctx->method.assign(mark, p - mark);
 }
@@ -112,7 +113,7 @@ st8:
 	if ( ++p == pe )
 		goto _test_eof8;
 case 8:
-#line 116 "src/http/parser.cpp"
+#line 117 "src/http/parser.cpp"
 	switch( (*p) ) {
 		case 33: goto tr12;
 		case 37: goto tr13;
@@ -133,7 +134,7 @@ case 8:
 		goto tr15;
 	goto st0;
 tr12:
-#line 8 "src/http/parser.rl"
+#line 9 "src/http/parser.rl"
 	{
   mark = p;
 }
@@ -142,7 +143,7 @@ st9:
 	if ( ++p == pe )
 		goto _test_eof9;
 case 9:
-#line 146 "src/http/parser.cpp"
+#line 147 "src/http/parser.cpp"
 	switch( (*p) ) {
 		case 32: goto tr16;
 		case 33: goto st9;
@@ -165,73 +166,73 @@ case 9:
 		goto st9;
 	goto st0;
 tr16:
-#line 32 "src/http/parser.rl"
+#line 33 "src/http/parser.rl"
 	{
   ctx->uri.path.assign(mark, p - mark);
 }
 	goto st10;
 tr33:
-#line 8 "src/http/parser.rl"
+#line 9 "src/http/parser.rl"
 	{
   mark = p;
 }
-#line 28 "src/http/parser.rl"
+#line 29 "src/http/parser.rl"
 	{
   ctx->uri.fragment.assign(mark, p - mark);
 }
 	goto st10;
 tr36:
-#line 28 "src/http/parser.rl"
+#line 29 "src/http/parser.rl"
 	{
   ctx->uri.fragment.assign(mark, p - mark);
 }
 	goto st10;
 tr43:
-#line 8 "src/http/parser.rl"
+#line 9 "src/http/parser.rl"
 	{
   mark = p;
 }
-#line 24 "src/http/parser.rl"
+#line 25 "src/http/parser.rl"
 	{
   ctx->uri.query.assign(mark, p - mark);
 }
 	goto st10;
 tr47:
-#line 24 "src/http/parser.rl"
+#line 25 "src/http/parser.rl"
 	{
   ctx->uri.query.assign(mark, p - mark);
 }
 	goto st10;
 tr53:
-#line 8 "src/http/parser.rl"
+#line 9 "src/http/parser.rl"
 	{
   mark = p;
 }
-#line 20 "src/http/parser.rl"
+#line 21 "src/http/parser.rl"
 	{
   ctx->uri.hostname.assign(mark, p - mark);
 }
-#line 32 "src/http/parser.rl"
+#line 33 "src/http/parser.rl"
 	{
   ctx->uri.path.assign(mark, p - mark);
 }
 	goto st10;
 tr61:
-#line 20 "src/http/parser.rl"
+#line 21 "src/http/parser.rl"
 	{
   ctx->uri.hostname.assign(mark, p - mark);
 }
-#line 32 "src/http/parser.rl"
+#line 33 "src/http/parser.rl"
 	{
   ctx->uri.path.assign(mark, p - mark);
 }
 	goto st10;
 tr82:
-#line 40 "src/http/parser.rl"
+#line 41 "src/http/parser.rl"
 	{
   ctx->uri.port.assign(mark, p - mark);
 }
-#line 32 "src/http/parser.rl"
+#line 33 "src/http/parser.rl"
 	{
   ctx->uri.path.assign(mark, p - mark);
 }
@@ -240,7 +241,7 @@ st10:
 	if ( ++p == pe )
 		goto _test_eof10;
 case 10:
-#line 244 "src/http/parser.cpp"
+#line 245 "src/http/parser.cpp"
 	if ( (*p) == 72 )
 		goto st11;
 	goto st0;
@@ -280,7 +281,7 @@ case 15:
 		goto tr27;
 	goto st0;
 tr27:
-#line 8 "src/http/parser.rl"
+#line 9 "src/http/parser.rl"
 	{
   mark = p;
 }
@@ -289,7 +290,7 @@ st16:
 	if ( ++p == pe )
 		goto _test_eof16;
 case 16:
-#line 293 "src/http/parser.cpp"
+#line 294 "src/http/parser.cpp"
 	if ( (*p) == 46 )
 		goto st17;
 	if ( 48 <= (*p) && (*p) <= 57 )
@@ -312,7 +313,7 @@ case 18:
 		goto st18;
 	goto st0;
 tr31:
-#line 12 "src/http/parser.rl"
+#line 13 "src/http/parser.rl"
 	{
   ctx->version.assign(mark, p - mark);
 }
@@ -321,7 +322,7 @@ st19:
 	if ( ++p == pe )
 		goto _test_eof19;
 case 19:
-#line 325 "src/http/parser.cpp"
+#line 326 "src/http/parser.cpp"
 	if ( (*p) == 10 )
 		goto st75;
 	goto st0;
@@ -331,57 +332,57 @@ st75:
 case 75:
 	goto st75;
 tr18:
-#line 32 "src/http/parser.rl"
+#line 33 "src/http/parser.rl"
 	{
   ctx->uri.path.assign(mark, p - mark);
 }
 	goto st20;
 tr45:
-#line 8 "src/http/parser.rl"
+#line 9 "src/http/parser.rl"
 	{
   mark = p;
 }
-#line 24 "src/http/parser.rl"
+#line 25 "src/http/parser.rl"
 	{
   ctx->uri.query.assign(mark, p - mark);
 }
 	goto st20;
 tr49:
-#line 24 "src/http/parser.rl"
+#line 25 "src/http/parser.rl"
 	{
   ctx->uri.query.assign(mark, p - mark);
 }
 	goto st20;
 tr55:
-#line 8 "src/http/parser.rl"
+#line 9 "src/http/parser.rl"
 	{
   mark = p;
 }
-#line 20 "src/http/parser.rl"
+#line 21 "src/http/parser.rl"
 	{
   ctx->uri.hostname.assign(mark, p - mark);
 }
-#line 32 "src/http/parser.rl"
+#line 33 "src/http/parser.rl"
 	{
   ctx->uri.path.assign(mark, p - mark);
 }
 	goto st20;
 tr63:
-#line 20 "src/http/parser.rl"
+#line 21 "src/http/parser.rl"
 	{
   ctx->uri.hostname.assign(mark, p - mark);
 }
-#line 32 "src/http/parser.rl"
+#line 33 "src/http/parser.rl"
 	{
   ctx->uri.path.assign(mark, p - mark);
 }
 	goto st20;
 tr83:
-#line 40 "src/http/parser.rl"
+#line 41 "src/http/parser.rl"
 	{
   ctx->uri.port.assign(mark, p - mark);
 }
-#line 32 "src/http/parser.rl"
+#line 33 "src/http/parser.rl"
 	{
   ctx->uri.path.assign(mark, p - mark);
 }
@@ -390,7 +391,7 @@ st20:
 	if ( ++p == pe )
 		goto _test_eof20;
 case 20:
-#line 394 "src/http/parser.cpp"
+#line 395 "src/http/parser.cpp"
 	switch( (*p) ) {
 		case 32: goto tr33;
 		case 33: goto tr34;
@@ -409,7 +410,7 @@ case 20:
 		goto tr34;
 	goto st0;
 tr34:
-#line 8 "src/http/parser.rl"
+#line 9 "src/http/parser.rl"
 	{
   mark = p;
 }
@@ -418,7 +419,7 @@ st21:
 	if ( ++p == pe )
 		goto _test_eof21;
 case 21:
-#line 422 "src/http/parser.cpp"
+#line 423 "src/http/parser.cpp"
 	switch( (*p) ) {
 		case 32: goto tr36;
 		case 33: goto st21;
@@ -437,7 +438,7 @@ case 21:
 		goto st21;
 	goto st0;
 tr35:
-#line 8 "src/http/parser.rl"
+#line 9 "src/http/parser.rl"
 	{
   mark = p;
 }
@@ -446,7 +447,7 @@ st22:
 	if ( ++p == pe )
 		goto _test_eof22;
 case 22:
-#line 450 "src/http/parser.cpp"
+#line 451 "src/http/parser.cpp"
 	if ( (*p) < 65 ) {
 		if ( 48 <= (*p) && (*p) <= 57 )
 			goto st23;
@@ -470,7 +471,7 @@ case 23:
 		goto st21;
 	goto st0;
 tr13:
-#line 8 "src/http/parser.rl"
+#line 9 "src/http/parser.rl"
 	{
   mark = p;
 }
@@ -479,7 +480,7 @@ st24:
 	if ( ++p == pe )
 		goto _test_eof24;
 case 24:
-#line 483 "src/http/parser.cpp"
+#line 484 "src/http/parser.cpp"
 	if ( (*p) < 65 ) {
 		if ( 48 <= (*p) && (*p) <= 57 )
 			goto st25;
@@ -503,31 +504,31 @@ case 25:
 		goto st9;
 	goto st0;
 tr57:
-#line 8 "src/http/parser.rl"
+#line 9 "src/http/parser.rl"
 	{
   mark = p;
 }
-#line 20 "src/http/parser.rl"
+#line 21 "src/http/parser.rl"
 	{
   ctx->uri.hostname.assign(mark, p - mark);
 }
 	goto st26;
 tr65:
-#line 20 "src/http/parser.rl"
+#line 21 "src/http/parser.rl"
 	{
   ctx->uri.hostname.assign(mark, p - mark);
 }
-#line 8 "src/http/parser.rl"
+#line 9 "src/http/parser.rl"
 	{
   mark = p;
 }
 	goto st26;
 tr84:
-#line 40 "src/http/parser.rl"
+#line 41 "src/http/parser.rl"
 	{
   ctx->uri.port.assign(mark, p - mark);
 }
-#line 8 "src/http/parser.rl"
+#line 9 "src/http/parser.rl"
 	{
   mark = p;
 }
@@ -536,7 +537,7 @@ st26:
 	if ( ++p == pe )
 		goto _test_eof26;
 case 26:
-#line 540 "src/http/parser.cpp"
+#line 541 "src/http/parser.cpp"
 	switch( (*p) ) {
 		case 32: goto tr16;
 		case 33: goto st26;
@@ -583,41 +584,41 @@ case 28:
 		goto st26;
 	goto st0;
 tr21:
-#line 32 "src/http/parser.rl"
+#line 33 "src/http/parser.rl"
 	{
   ctx->uri.path.assign(mark, p - mark);
 }
 	goto st29;
 tr59:
-#line 8 "src/http/parser.rl"
+#line 9 "src/http/parser.rl"
 	{
   mark = p;
 }
-#line 20 "src/http/parser.rl"
+#line 21 "src/http/parser.rl"
 	{
   ctx->uri.hostname.assign(mark, p - mark);
 }
-#line 32 "src/http/parser.rl"
+#line 33 "src/http/parser.rl"
 	{
   ctx->uri.path.assign(mark, p - mark);
 }
 	goto st29;
 tr67:
-#line 20 "src/http/parser.rl"
+#line 21 "src/http/parser.rl"
 	{
   ctx->uri.hostname.assign(mark, p - mark);
 }
-#line 32 "src/http/parser.rl"
+#line 33 "src/http/parser.rl"
 	{
   ctx->uri.path.assign(mark, p - mark);
 }
 	goto st29;
 tr86:
-#line 40 "src/http/parser.rl"
+#line 41 "src/http/parser.rl"
 	{
   ctx->uri.port.assign(mark, p - mark);
 }
-#line 32 "src/http/parser.rl"
+#line 33 "src/http/parser.rl"
 	{
   ctx->uri.path.assign(mark, p - mark);
 }
@@ -626,7 +627,7 @@ st29:
 	if ( ++p == pe )
 		goto _test_eof29;
 case 29:
-#line 630 "src/http/parser.cpp"
+#line 631 "src/http/parser.cpp"
 	switch( (*p) ) {
 		case 32: goto tr43;
 		case 33: goto tr44;
@@ -646,7 +647,7 @@ case 29:
 		goto tr44;
 	goto st0;
 tr44:
-#line 8 "src/http/parser.rl"
+#line 9 "src/http/parser.rl"
 	{
   mark = p;
 }
@@ -655,7 +656,7 @@ st30:
 	if ( ++p == pe )
 		goto _test_eof30;
 case 30:
-#line 659 "src/http/parser.cpp"
+#line 660 "src/http/parser.cpp"
 	switch( (*p) ) {
 		case 32: goto tr47;
 		case 33: goto st30;
@@ -675,7 +676,7 @@ case 30:
 		goto st30;
 	goto st0;
 tr46:
-#line 8 "src/http/parser.rl"
+#line 9 "src/http/parser.rl"
 	{
   mark = p;
 }
@@ -684,7 +685,7 @@ st31:
 	if ( ++p == pe )
 		goto _test_eof31;
 case 31:
-#line 688 "src/http/parser.cpp"
+#line 689 "src/http/parser.cpp"
 	if ( (*p) < 65 ) {
 		if ( 48 <= (*p) && (*p) <= 57 )
 			goto st32;
@@ -708,7 +709,7 @@ case 32:
 		goto st30;
 	goto st0;
 tr14:
-#line 8 "src/http/parser.rl"
+#line 9 "src/http/parser.rl"
 	{
   mark = p;
 }
@@ -717,7 +718,7 @@ st33:
 	if ( ++p == pe )
 		goto _test_eof33;
 case 33:
-#line 721 "src/http/parser.cpp"
+#line 722 "src/http/parser.cpp"
 	switch( (*p) ) {
 		case 32: goto tr16;
 		case 33: goto st26;
@@ -765,7 +766,7 @@ case 34:
 		goto tr54;
 	goto st0;
 tr54:
-#line 8 "src/http/parser.rl"
+#line 9 "src/http/parser.rl"
 	{
   mark = p;
 }
@@ -774,7 +775,7 @@ st35:
 	if ( ++p == pe )
 		goto _test_eof35;
 case 35:
-#line 778 "src/http/parser.cpp"
+#line 779 "src/http/parser.cpp"
 	switch( (*p) ) {
 		case 32: goto tr61;
 		case 33: goto st35;
@@ -798,7 +799,7 @@ case 35:
 		goto st35;
 	goto st0;
 tr56:
-#line 8 "src/http/parser.rl"
+#line 9 "src/http/parser.rl"
 	{
   mark = p;
 }
@@ -807,7 +808,7 @@ st36:
 	if ( ++p == pe )
 		goto _test_eof36;
 case 36:
-#line 811 "src/http/parser.cpp"
+#line 812 "src/http/parser.cpp"
 	if ( (*p) < 65 ) {
 		if ( 48 <= (*p) && (*p) <= 57 )
 			goto st37;
@@ -831,17 +832,17 @@ case 37:
 		goto st35;
 	goto st0;
 tr58:
-#line 8 "src/http/parser.rl"
+#line 9 "src/http/parser.rl"
 	{
   mark = p;
 }
-#line 20 "src/http/parser.rl"
+#line 21 "src/http/parser.rl"
 	{
   ctx->uri.hostname.assign(mark, p - mark);
 }
 	goto st38;
 tr66:
-#line 20 "src/http/parser.rl"
+#line 21 "src/http/parser.rl"
 	{
   ctx->uri.hostname.assign(mark, p - mark);
 }
@@ -850,7 +851,7 @@ st38:
 	if ( ++p == pe )
 		goto _test_eof38;
 case 38:
-#line 854 "src/http/parser.cpp"
+#line 855 "src/http/parser.cpp"
 	switch( (*p) ) {
 		case 32: goto tr16;
 		case 33: goto st39;
@@ -956,7 +957,7 @@ case 42:
 		goto tr73;
 	goto st0;
 tr73:
-#line 8 "src/http/parser.rl"
+#line 9 "src/http/parser.rl"
 	{
   mark = p;
 }
@@ -965,7 +966,7 @@ st43:
 	if ( ++p == pe )
 		goto _test_eof43;
 case 43:
-#line 969 "src/http/parser.cpp"
+#line 970 "src/http/parser.cpp"
 	switch( (*p) ) {
 		case 32: goto tr61;
 		case 33: goto st43;
@@ -989,7 +990,7 @@ case 43:
 		goto st43;
 	goto st0;
 tr74:
-#line 8 "src/http/parser.rl"
+#line 9 "src/http/parser.rl"
 	{
   mark = p;
 }
@@ -998,7 +999,7 @@ st44:
 	if ( ++p == pe )
 		goto _test_eof44;
 case 44:
-#line 1002 "src/http/parser.cpp"
+#line 1003 "src/http/parser.cpp"
 	if ( (*p) < 65 ) {
 		if ( 48 <= (*p) && (*p) <= 57 )
 			goto st45;
@@ -1022,17 +1023,17 @@ case 45:
 		goto st43;
 	goto st0;
 tr75:
-#line 8 "src/http/parser.rl"
+#line 9 "src/http/parser.rl"
 	{
   mark = p;
 }
-#line 20 "src/http/parser.rl"
+#line 21 "src/http/parser.rl"
 	{
   ctx->uri.hostname.assign(mark, p - mark);
 }
 	goto st46;
 tr78:
-#line 20 "src/http/parser.rl"
+#line 21 "src/http/parser.rl"
 	{
   ctx->uri.hostname.assign(mark, p - mark);
 }
@@ -1041,7 +1042,7 @@ st46:
 	if ( ++p == pe )
 		goto _test_eof46;
 case 46:
-#line 1045 "src/http/parser.cpp"
+#line 1046 "src/http/parser.cpp"
 	switch( (*p) ) {
 		case 32: goto tr16;
 		case 33: goto st26;
@@ -1068,7 +1069,7 @@ case 46:
 		goto st26;
 	goto st0;
 tr80:
-#line 8 "src/http/parser.rl"
+#line 9 "src/http/parser.rl"
 	{
   mark = p;
 }
@@ -1077,7 +1078,7 @@ st47:
 	if ( ++p == pe )
 		goto _test_eof47;
 case 47:
-#line 1081 "src/http/parser.cpp"
+#line 1082 "src/http/parser.cpp"
 	switch( (*p) ) {
 		case 32: goto tr16;
 		case 33: goto st26;
@@ -1218,7 +1219,7 @@ case 51:
 		goto st26;
 	goto st0;
 tr71:
-#line 8 "src/http/parser.rl"
+#line 9 "src/http/parser.rl"
 	{
   mark = p;
 }
@@ -1227,7 +1228,7 @@ st52:
 	if ( ++p == pe )
 		goto _test_eof52;
 case 52:
-#line 1231 "src/http/parser.cpp"
+#line 1232 "src/http/parser.cpp"
 	switch( (*p) ) {
 		case 32: goto tr16;
 		case 33: goto st39;
@@ -1374,7 +1375,7 @@ case 56:
 		goto st39;
 	goto st0;
 tr15:
-#line 8 "src/http/parser.rl"
+#line 9 "src/http/parser.rl"
 	{
   mark = p;
 }
@@ -1383,7 +1384,7 @@ st57:
 	if ( ++p == pe )
 		goto _test_eof57;
 case 57:
-#line 1387 "src/http/parser.cpp"
+#line 1388 "src/http/parser.cpp"
 	switch( (*p) ) {
 		case 32: goto tr16;
 		case 33: goto st9;
@@ -1412,7 +1413,7 @@ case 57:
 		goto st57;
 	goto st0;
 tr94:
-#line 36 "src/http/parser.rl"
+#line 37 "src/http/parser.rl"
 	{
   ctx->uri.scheme.assign(mark, p - mark);
 }
@@ -1421,7 +1422,7 @@ st58:
 	if ( ++p == pe )
 		goto _test_eof58;
 case 58:
-#line 1425 "src/http/parser.cpp"
+#line 1426 "src/http/parser.cpp"
 	switch( (*p) ) {
 		case 33: goto st59;
 		case 37: goto st60;
@@ -1487,7 +1488,7 @@ case 61:
 		goto st59;
 	goto st0;
 tr2:
-#line 8 "src/http/parser.rl"
+#line 9 "src/http/parser.rl"
 	{
   mark = p;
 }
@@ -1496,7 +1497,7 @@ st62:
 	if ( ++p == pe )
 		goto _test_eof62;
 case 62:
-#line 1500 "src/http/parser.cpp"
+#line 1501 "src/http/parser.cpp"
 	if ( (*p) == 69 )
 		goto st63;
 	goto st0;
@@ -1508,7 +1509,7 @@ case 63:
 		goto st7;
 	goto st0;
 tr3:
-#line 8 "src/http/parser.rl"
+#line 9 "src/http/parser.rl"
 	{
   mark = p;
 }
@@ -1517,7 +1518,7 @@ st64:
 	if ( ++p == pe )
 		goto _test_eof64;
 case 64:
-#line 1521 "src/http/parser.cpp"
+#line 1522 "src/http/parser.cpp"
 	if ( (*p) == 69 )
 		goto st65;
 	goto st0;
@@ -1536,7 +1537,7 @@ case 66:
 		goto st7;
 	goto st0;
 tr4:
-#line 8 "src/http/parser.rl"
+#line 9 "src/http/parser.rl"
 	{
   mark = p;
 }
@@ -1545,7 +1546,7 @@ st67:
 	if ( ++p == pe )
 		goto _test_eof67;
 case 67:
-#line 1549 "src/http/parser.cpp"
+#line 1550 "src/http/parser.cpp"
 	if ( (*p) == 80 )
 		goto st68;
 	goto st0;
@@ -1585,7 +1586,7 @@ case 72:
 		goto st7;
 	goto st0;
 tr5:
-#line 8 "src/http/parser.rl"
+#line 9 "src/http/parser.rl"
 	{
   mark = p;
 }
@@ -1594,7 +1595,7 @@ st73:
 	if ( ++p == pe )
 		goto _test_eof73;
 case 73:
-#line 1598 "src/http/parser.cpp"
+#line 1599 "src/http/parser.cpp"
 	switch( (*p) ) {
 		case 79: goto st74;
 		case 85: goto st63;
@@ -1687,10 +1688,10 @@ case 74:
 	_out: {}
 	}
 
-#line 121 "src/http/parser.rl"
+#line 122 "src/http/parser.rl"
 
     if (cs >= http_parser_first_final) {
-      *result = ctx_storage;
+      *result = std::move(ctx_storage);
       return true;
     } else {
       return false;

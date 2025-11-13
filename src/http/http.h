@@ -1,7 +1,9 @@
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -10,15 +12,46 @@
 struct HttpHeader {
     std::string name;
     std::string value;
-
-    std::string write() const;
 };
 
-struct HttpEntity {
-    std::vector<HttpHeader> headers;
-    std::string body;
+class HttpEntity {
+    std::vector<HttpHeader> m_headers;
+    std::unique_ptr<char const[]> m_content;
+    size_t m_content_size;
 
-    std::string write() const;
+public:
+    HttpEntity(std::string const& content_type, std::unique_ptr<char[]> content, size_t content_size)
+        : m_headers { HttpHeader { .name = "Content-Type", .value = content_type } }
+        , m_content { std::move(content) }
+        , m_content_size { content_size }
+    {
+    }
+
+    HttpEntity(std::string const& content_type, std::string content)
+        : m_headers { HttpHeader { .name = "Content-Type", .value = content_type } }
+        , m_content_size { content.size() }
+    {
+        auto buff { std::make_unique<char[]>(m_content_size) };
+        std::copy(content.begin(), content.end(), buff.get());
+        m_content = std::move(buff);
+    }
+
+    ~HttpEntity() = default;
+
+    std::unique_ptr<char const[]>& content()
+    {
+        return m_content;
+    }
+
+    size_t content_size() const
+    {
+        return m_content_size;
+    }
+
+    std::vector<HttpHeader> const& headers() const
+    {
+        return m_headers;
+    }
 };
 
 struct RequestURI {
@@ -36,7 +69,7 @@ struct HttpRequest {
     std::string method;
     RequestURI uri;
     std::vector<HttpHeader> headers;
-    std::optional<HttpEntity> entity {};
+    std::unique_ptr<HttpEntity> entity { nullptr };
 };
 
 enum class ResponseCode {
@@ -58,15 +91,46 @@ inline std::map<ResponseCode, std::string> STATUS_CODE_REASON {
 };
 
 struct HttpResponse {
-
     ResponseCode status;
     std::string http_version;
     std::vector<HttpHeader> headers {};
-    std::optional<HttpEntity> entity {};
-
-    std::string write() const;
+    std::unique_ptr<HttpEntity> entity { nullptr };
 };
 
 std::string url_decode(std::string_view encoded);
 
 inline HttpResponse const BAD_REQUEST_RESPONSE { .status = ResponseCode::BAD_REQUEST, .http_version = "1.1" };
+
+using pending_send_buffer_t = std::pair<size_t, std::unique_ptr<char const[]>>;
+
+enum class HttpRequestReadWriteStatus {
+    Error,
+    Finished,
+    ConnectionClosed,
+    NeedContinue,
+};
+
+struct HttpResponseWriter {
+    std::vector<pending_send_buffer_t> pending_buffers;
+    std::unique_ptr<char const[]> cur_send_buffer { nullptr };
+    size_t cur_bytes_to_send { 0 };
+    size_t cur_bytes_sent { 0 };
+
+    bool is_done_sending();
+    void set_next_currently_sending();
+    HttpRequestReadWriteStatus write_response(int receiver_fd);
+};
+
+HttpResponseWriter make_response_writer(HttpResponse& response);
+
+using http_reader_result_t = std::pair<HttpRequestReadWriteStatus, std::optional<HttpRequest>>;
+
+struct HttpRequestReader {
+    std::unique_ptr<char[]> reading_buffer { nullptr };
+    size_t bytes_to_read { 0 };
+    size_t bytes_read { 0 };
+
+    http_reader_result_t read_request(int sender_fd);
+};
+
+HttpRequestReader make_request_reader(size_t bytes_to_read);
