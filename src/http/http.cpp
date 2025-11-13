@@ -6,6 +6,7 @@
 #include <memory>
 #include <string>
 #include <sys/socket.h>
+#include <utility>
 
 int hext_to_int(char c)
 {
@@ -42,11 +43,20 @@ std::string url_decode(std::string_view encoded)
     return decoded;
 }
 
-pending_send_buffer_t allocate_string(std::string_view s)
+pending_send_buffer_t allocate_string2(std::string_view s)
 {
     auto buff { std::make_unique<char[]>(s.size()) };
     std::copy(s.begin(), s.end(), buff.get());
     return { s.size(), std::move(buff) };
+}
+
+template<typename... Args>
+pending_send_buffer_t allocate_string(std::format_string<Args...> fmt, Args&&... args)
+{
+    auto const size = std::formatted_size(fmt, std::forward<Args>(args)...);
+    auto buff { std::make_unique<char[]>(size) };
+    std::format_to(buff.get(), fmt, std::forward<Args>(args)...);
+    return { size, std::move(buff) };
 }
 
 HttpResponseWriter make_response_writer(HttpResponse& response)
@@ -62,21 +72,17 @@ HttpResponseWriter make_response_writer(HttpResponse& response)
         send_buffers_queue.emplace_back(allocate_string("\r\n"));
 
         for (auto header { re.headers().rbegin() }; header != re.headers().rend(); header++) {
-            std::string repr { std::format("{}: {}\r\n", header->name, header->value) };
-            send_buffers_queue.emplace_back(allocate_string(repr));
+            send_buffers_queue.emplace_back(allocate_string("{}: {}\r\n", header->name, header->value));
         }
 
-        std::string repr { std::format("Content-Length: {}\r\n", re.content_size()) };
-        send_buffers_queue.emplace_back(allocate_string(repr));
+        send_buffers_queue.emplace_back(allocate_string("Content-Length: {}\r\n", re.content_size()));
     }
 
     for (auto header { response.headers.rbegin() }; header != response.headers.rend(); header++) {
-        std::string repr { std::format("{}: {}\r\n", header->name, header->value) };
-        send_buffers_queue.emplace_back(allocate_string(repr));
+        send_buffers_queue.emplace_back(allocate_string("{}: {}\r\n", header->name, header->value));
     }
 
-    std::string status_line { std::format("HTTP/{} {} {}\r\n", response.http_version, static_cast<int>(response.status), STATUS_CODE_REASON[response.status]) };
-    send_buffers_queue.emplace_back(allocate_string(status_line));
+    send_buffers_queue.emplace_back(allocate_string("HTTP/{} {}\r\n", response.http_version, static_cast<int>(response.status), STATUS_CODE_REASON[response.status]));
 
     return HttpResponseWriter { .pending_buffers = std::move(send_buffers_queue) };
 }

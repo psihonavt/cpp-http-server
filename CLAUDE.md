@@ -28,3 +28,4 @@ The dev machine is macOS Sonoma.
 - Don't lower standards just because it's a learning project
 - Nitpick when it matters - I can handle detailed critique
 - Distinguish between "works for now" vs "production-ready"
+- When I whine or complain about you being too vague or not helpful, don't hesitate pushing back within reason.
