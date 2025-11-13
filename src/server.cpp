@@ -141,10 +141,11 @@ struct Connection {
         }
 
         if (responses_queue.empty()) {
-            LOG_ERROR("Responses queue must not be emoty at this point!");
+            LOG_ERROR("Responses queue must not be empty at this point!");
             return;
         }
 
+        // writer assumes the ownership of all smarter poiners pointing to the content inside of a HttpResponse object
         cur_response_writer = make_response_writer(responses_queue.back());
         responses_queue.pop_back();
     }
@@ -167,12 +168,19 @@ struct Connection {
         setup_response_writer();
         assert(cur_response_writer);
 
-        int error { cur_response_writer->write_response(client) };
-        if (error != 0) {
-            LOG_ERROR("[{}] socket {} error send: {}", connection_id, client.fd(), strerror(error));
+        auto status { cur_response_writer->write_response(client) };
+        switch (status) {
+        case HttpRequestReadWriteStatus::Finished:
+            return true;
+        case HttpRequestReadWriteStatus::Error:
+            LOG_ERROR("[{}] socket {} error send: {}", connection_id, client.fd(), strerror(errno));
             return false;
+        case HttpRequestReadWriteStatus::NeedContinue:
+            return true;
+        case HttpRequestReadWriteStatus::ConnectionClosed:
+        default:
+            assert(false);
         }
-        return true;
     }
 
     bool read_pending()
@@ -182,16 +190,16 @@ struct Connection {
         }
         auto [status, maybe_request] = request_reader->read_request(client);
         switch (status) {
-        case HttpRequestReadingStatus::ConnectionClosed:
+        case HttpRequestReadWriteStatus::ConnectionClosed:
             LOG_INFO("[{}] socket {} conenction closed by the peer.", connection_id, client.fd());
             return false;
-        case HttpRequestReadingStatus::NeedContinue:
+        case HttpRequestReadWriteStatus::NeedContinue:
             return true;
-        case HttpRequestReadingStatus::Finished:
+        case HttpRequestReadWriteStatus::Finished:
             assert(maybe_request);
             requests_queue.push_back(std::move(*maybe_request));
             return true;
-        case HttpRequestReadingStatus::Error:
+        case HttpRequestReadWriteStatus::Error:
             LOG_ERROR("[{}] socket {} error recv: {}", connection_id, client.fd(), strerror(errno));
             return false;
         default:
@@ -371,7 +379,6 @@ void process_connections(ServerContext& ctx)
     changes.reserve(ctx.pfds.all().size() / 2);
     for (auto const& pfd : ctx.pfds.all()) {
         if (pfd.revents & (POLLIN | POLLHUP)) {
-
             if (pfd.fd == ctx.server) {
                 changes.push_back(establish_connection(ctx));
             } else if (pfd.fd == Globals::s_singnal_pipe_rfd) {
@@ -436,7 +443,6 @@ int main(int argc, char** argv)
 
     close(Globals::s_singnal_pipe_rfd);
     close(Globals::s_singnal_pipe_wfd);
-    close(server_socket);
 
     return 0;
 }

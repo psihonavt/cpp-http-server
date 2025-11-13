@@ -33,6 +33,7 @@ public:
     {
         auto buff { std::make_unique<char[]>(m_content_size) };
         std::copy(content.begin(), content.end(), buff.get());
+        m_content = std::move(buff);
     }
 
     ~HttpEntity() = default;
@@ -102,32 +103,32 @@ inline HttpResponse const BAD_REQUEST_RESPONSE { .status = ResponseCode::BAD_REQ
 
 using pending_send_buffer_t = std::pair<size_t, std::unique_ptr<char const[]>>;
 
-struct HttpResponseWriter {
-    std::vector<pending_send_buffer_t> pending_buffers;
-    std::unique_ptr<char const[]> cur_send_buffer { nullptr };
-    ssize_t cur_bytes_to_send { 0 };
-    ssize_t cur_bytes_sent { 0 };
-
-    bool is_done_sending();
-    void set_next_currently_sending();
-    int write_response(int receiver_fd);
-};
-
-HttpResponseWriter make_response_writer(HttpResponse& response);
-
-enum class HttpRequestReadingStatus {
+enum class HttpRequestReadWriteStatus {
     Error,
     Finished,
     ConnectionClosed,
     NeedContinue,
 };
 
-using http_reader_result_t = std::pair<HttpRequestReadingStatus, std::optional<HttpRequest>>;
+struct HttpResponseWriter {
+    std::vector<pending_send_buffer_t> pending_buffers;
+    std::unique_ptr<char const[]> cur_send_buffer { nullptr };
+    size_t cur_bytes_to_send { 0 };
+    size_t cur_bytes_sent { 0 };
+
+    bool is_done_sending();
+    void set_next_currently_sending();
+    HttpRequestReadWriteStatus write_response(int receiver_fd);
+};
+
+HttpResponseWriter make_response_writer(HttpResponse& response);
+
+using http_reader_result_t = std::pair<HttpRequestReadWriteStatus, std::optional<HttpRequest>>;
 
 struct HttpRequestReader {
     std::unique_ptr<char[]> reading_buffer { nullptr };
-    ssize_t bytes_to_read { 0 };
-    ssize_t bytes_read { 0 };
+    size_t bytes_to_read { 0 };
+    size_t bytes_read { 0 };
 
     http_reader_result_t read_request(int sender_fd);
 };
