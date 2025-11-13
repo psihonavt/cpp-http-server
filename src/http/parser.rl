@@ -1,5 +1,6 @@
 #include "parser.h"
 #include <cstring>
+#include <memory>
 
 %%{
 
@@ -120,7 +121,7 @@ bool parse_http_request(char const* data, size_t len, HttpRequest* result) {
     %% write exec;
 
     if (cs >= http_parser_first_final) {
-      *result = ctx_storage;
+      *result = std::move(ctx_storage);
       return true;
     } else {
       return false;

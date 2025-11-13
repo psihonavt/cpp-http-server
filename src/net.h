@@ -52,6 +52,11 @@ public:
     {
         return m_sockfd;
     }
+
+    int const& fd()
+    {
+        return m_sockfd;
+    }
 };
 
 enum class PfdsChangeAction {
