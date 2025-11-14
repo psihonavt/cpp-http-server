@@ -180,6 +180,7 @@ struct Connection {
         case HttpRequestReadWriteStatus::ConnectionClosed:
         default:
             assert(false);
+            return false;
         }
     }
 
@@ -191,7 +192,7 @@ struct Connection {
         auto [status, maybe_request] = request_reader->read_request(client);
         switch (status) {
         case HttpRequestReadWriteStatus::ConnectionClosed:
-            LOG_INFO("[{}] socket {} conenction closed by the peer.", connection_id, client.fd());
+            LOG_INFO("[{}] socket {} conenction closed (or reset) by peer.", connection_id, client.fd());
             return false;
         case HttpRequestReadWriteStatus::NeedContinue:
             return true;

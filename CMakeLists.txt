@@ -8,6 +8,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_COLOR_DIAGNOSTICS ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+OPTION(ENABLE_ASAN "Enable AddressSanitizer" OFF)
+
 set(MY_COMPILE_FLAGS
   -Wall
   -Wextra
@@ -18,11 +20,18 @@ set(MY_COMPILE_FLAGS
   -Wswitch-default
   -Wimplicit-fallthrough
   -Wtautological-overlap-compare
+  -Wunused-parameter
 )
 
-set(MY_SANITIZING_FLAGS
-  -fsanitize=address
-)
+if(ENABLE_ASAN)
+  MESSAGE(STATUS "ASAN enabled")
+  set(MY_SANITIZING_FLAGS
+    -fsanitize=address
+  )
+else()
+  MESSAGE(STATUS "ASAN disabled")
+  set(MY_SANITIZING_FLAGS)
+endif()
 
 add_executable(server
   src/net.cpp

@@ -10,4 +10,5 @@ CompileFlags:
   -Wswitch-default,
   -Wimplicit-fallthrough,
   -Wtautological-overlap-compare,
+  -Wunused-parameter,
 ]

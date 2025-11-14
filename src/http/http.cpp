@@ -1,7 +1,9 @@
 #include "http.h"
 #include "http/parser.h"
+#include "utils/logging.h"
 #include <cassert>
 #include <cerrno>
+#include <cstring>
 #include <format>
 #include <memory>
 #include <string>
@@ -41,13 +43,6 @@ std::string url_decode(std::string_view encoded)
         }
     }
     return decoded;
-}
-
-pending_send_buffer_t allocate_string2(std::string_view s)
-{
-    auto buff { std::make_unique<char[]>(s.size()) };
-    std::copy(s.begin(), s.end(), buff.get());
-    return { s.size(), std::move(buff) };
 }
 
 template<typename... Args>
@@ -98,6 +93,7 @@ void HttpResponseWriter::set_next_currently_sending()
         return;
     }
 
+    cur_send_buffer.reset();
     auto& pair { pending_buffers.back() };
     cur_bytes_to_send = pair.first;
     cur_send_buffer = std::move(pair.second);
@@ -124,6 +120,7 @@ HttpRequestReadWriteStatus HttpResponseWriter::write_response(int receiver_fd)
     if (cur_bytes_sent == cur_bytes_to_send) {
         set_next_currently_sending();
         if (is_done_sending()) {
+            cur_send_buffer.reset();
             return HttpRequestReadWriteStatus::Finished;
         }
     }
@@ -150,6 +147,10 @@ http_reader_result_t HttpRequestReader::read_request(int sender_fd)
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
             return { HttpRequestReadWriteStatus::NeedContinue, {} };
         }
+        if (errno == 54) {
+            return { HttpRequestReadWriteStatus::ConnectionClosed, {} };
+        }
+        LOG_INFO("errno {}; strerror: {}", errno, strerror(errno));
         return { HttpRequestReadWriteStatus::Error, {} };
     }
 

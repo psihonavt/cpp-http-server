@@ -5,7 +5,6 @@
 #include <cassert>
 #include <cstddef>
 #include <cstring>
-#include <format>
 #include <netinet/in.h>
 #include <sys/poll.h>
 #include <sys/socket.h>
@@ -48,7 +47,7 @@ std::string get_ip_address(sockaddr_storage* ss)
     return std::string { ip };
 }
 
-void PfdsHolder::ensure_fd_exists(int fd)
+void PfdsHolder::ensure_fd_exists([[maybe_unused]] int fd)
 {
     assert(m_index_map.contains(fd) && std::format("{} descriptor doesn't exist", fd).c_str());
 }
