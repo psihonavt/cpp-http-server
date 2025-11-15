@@ -1,5 +1,7 @@
 #pragma once
 
+#include "utils/files.h"
+#include "utils/logging.h"
 #include <algorithm>
 #include <cstddef>
 #include <map>
@@ -7,6 +9,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unistd.h>
 #include <vector>
 
 struct HttpHeader {
@@ -17,6 +20,7 @@ struct HttpHeader {
 class HttpEntity {
     std::vector<HttpHeader> m_headers;
     std::unique_ptr<char const[]> m_content;
+    int m_file_fd { -1 };
     size_t m_content_size;
 
 public:
@@ -24,6 +28,13 @@ public:
         : m_headers { HttpHeader { .name = "Content-Type", .value = content_type } }
         , m_content { std::move(content) }
         , m_content_size { content_size }
+    {
+    }
+
+    HttpEntity(FileResponse& file)
+        : m_headers { HttpHeader { .name = "Content-Type", .value = file.mime_type } }
+        , m_file_fd { file.fd }
+        , m_content_size { file.size }
     {
     }
 
@@ -36,7 +47,15 @@ public:
         m_content = std::move(buff);
     }
 
-    ~HttpEntity() = default;
+    bool is_file() const
+    {
+        return (m_file_fd != -1);
+    }
+
+    int file_fd() const
+    {
+        return m_file_fd;
+    }
 
     std::unique_ptr<char const[]>& content()
     {
@@ -110,7 +129,40 @@ enum class HttpRequestReadWriteStatus {
     NeedContinue,
 };
 
+struct PendingFile {
+    int fd;
+    off_t bytes_to_send;
+    off_t bytes_sent { 0 };
+
+    bool is_done_sending()
+    {
+        return bytes_to_send == 0;
+    }
+
+    PendingFile(int new_fd, off_t size)
+        : fd { new_fd }
+        , bytes_to_send { size }
+    {
+    }
+
+    PendingFile(PendingFile const&) = delete;
+    PendingFile& operator=(PendingFile const&) = delete;
+
+    PendingFile(PendingFile&&) = default;
+    PendingFile& operator=(PendingFile&&) = default;
+
+    ~PendingFile()
+    {
+        if (fd >= 0) {
+            LOG_INFO("Cleaning up the {} file descriptor.", fd);
+            close(fd);
+        }
+    }
+};
+
 struct HttpResponseWriter {
+    std::unique_ptr<PendingFile> pending_file { nullptr };
+    bool is_sending_file { false };
     std::vector<pending_send_buffer_t> pending_buffers;
     std::unique_ptr<char const[]> cur_send_buffer { nullptr };
     size_t cur_bytes_to_send { 0 };

@@ -61,11 +61,12 @@ HttpResponse handle_http_request(HttpRequest const& req, std::filesystem::path c
                 };
             }
         } else {
+            assert(is_fd_open(maybe_file.fd));
             resp = HttpResponse {
                 .status = ResponseCode::OK,
                 .http_version = req.version,
                 .headers = {},
-                .entity = std::make_unique<HttpEntity>(maybe_file.mime_type, std::move(maybe_file.content), maybe_file.size),
+                .entity = std::make_unique<HttpEntity>(maybe_file),
             };
         }
     }
