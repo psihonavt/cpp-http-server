@@ -118,7 +118,11 @@ void HttpResponseWriter::set_next_currently_sending()
 
 HttpRequestReadWriteStatus HttpResponseWriter::write_response(int receiver_fd)
 {
-    if ((!pending_buffers.empty() && !cur_send_buffer) || (pending_buffers.empty() && !cur_send_buffer && !is_sending_file && pending_file)) {
+    bool need_to_set_cur_send_buffer = !pending_buffers.empty() && !cur_send_buffer;
+    bool all_buffers_sent = pending_buffers.empty() && !cur_send_buffer;
+    bool need_to_send_file = !is_sending_file && pending_file;
+
+    if (need_to_set_cur_send_buffer || (all_buffers_sent && need_to_send_file)) {
         set_next_currently_sending();
     }
     if (!is_sending_file && !cur_send_buffer) {
@@ -127,7 +131,7 @@ HttpRequestReadWriteStatus HttpResponseWriter::write_response(int receiver_fd)
     }
 
     if (is_sending_file && !pending_file) {
-        LOG_ERROR("No file to send!");
+        LOG_ERROR("Trying to do a sendfile but there is no file!");
         return HttpRequestReadWriteStatus::Error;
     }
 
@@ -161,7 +165,7 @@ HttpRequestReadWriteStatus HttpResponseWriter::write_response(int receiver_fd)
         }
         pending_file->bytes_sent += len;
         pending_file->bytes_to_send -= len;
-        if (pending_file->bytes_to_send == 0) {
+        if (pending_file->is_done_sending()) {
             return HttpRequestReadWriteStatus::Finished;
         }
         return HttpRequestReadWriteStatus::NeedContinue;
