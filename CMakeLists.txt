@@ -34,18 +34,17 @@ else()
 endif()
 
 add_executable(server
-  src/net.cpp
   src/server.cpp
 )
 
 add_executable(test_client
-  src/net.cpp
   src/test_client.cpp
 )
 
 add_library(utils STATIC
   src/utils/llist.cpp
   src/utils/files.cpp
+  src/utils/net.cpp
   src/http/parser.cpp
   src/http/http.cpp
   src/http/mime.cpp

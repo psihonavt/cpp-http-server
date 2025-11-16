@@ -3,6 +3,7 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <string>
+#include <sys/_types/_off_t.h>
 #include <sys/poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -86,3 +87,16 @@ public:
     int do_poll();
     std::vector<pollfd> const& all();
 };
+
+/**
+ * @brief Platform-agnostic wrapper of a `sendfile` syscall on different platforms. For now, only OSX is supported.
+ *
+ * @param socket_fd a streaming socket to send the file to
+ * @param file_fd a descriptor of a file to send
+ * @param offset where to being in the file
+ * @param bytes_to_send how many bytes to send
+ * @return a pair of bytes sent and sending error status;
+ *  when the error is -1, the client should check the errno to whether conitnue or not;
+ *  even with the error set, it's still possible that some bytes were send (e.g., in non-blocking sockets)
+ */
+std::pair<off_t, int> ssendfile(int socket_fd, int file_fd, off_t offset, off_t bytes_to_send);

@@ -1,10 +1,11 @@
 #include "net.h"
+#include "config/platform.h"
 #include "config/server.h"
-#include "utils/logging.h"
 #include <arpa/inet.h>
 #include <cassert>
 #include <cstddef>
 #include <cstring>
+#include <format>
 #include <netinet/in.h>
 #include <sys/poll.h>
 #include <sys/socket.h>
@@ -114,4 +115,16 @@ void PfdsHolder::handle_change(PfdsChange const& change)
     default:
         assert(false && "unexpected action");
     }
+}
+
+std::pair<off_t, int> ssendfile(int socket_fd, int file_fd, off_t offset, off_t bytes_to_send)
+{
+#ifdef OSX_PLATFORM
+    off_t len { bytes_to_send };
+    auto error = sendfile(file_fd, socket_fd, offset, &len, nullptr, 0);
+    if (error == -1) {
+        return { len, error };
+    }
+    return { len, 0 };
+#endif
 }

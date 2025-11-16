@@ -1,6 +1,7 @@
 #include "http.h"
 #include "http/parser.h"
 #include "utils/logging.h"
+#include "utils/net.h"
 #include <cassert>
 #include <cerrno>
 #include <cstddef>
@@ -68,10 +69,10 @@ HttpResponseWriter make_response_writer(HttpResponse& response)
     if (response.entity) {
         auto& re { *response.entity };
 
-        if (!re.is_file()) {
-            send_buffers_queue.emplace_back(re.content_size(), std::move(re.content()));
-        } else {
-            pending_file = std::make_unique<PendingFile>(re.file_fd(), static_cast<off_t>(re.content_size()));
+        if (!re.holds_file() && re.content()) {
+            send_buffers_queue.emplace_back(re.content_size(), std::move(*re.content()));
+        } else if (re.holds_file() && re.file()) {
+            pending_file = std::make_unique<PendingFile>(std::move(*re.file()));
         }
         send_buffers_queue.emplace_back(allocate_string("\r\n"));
 
@@ -80,20 +81,22 @@ HttpResponseWriter make_response_writer(HttpResponse& response)
         }
 
         send_buffers_queue.emplace_back(allocate_string("Content-Length: {}\r\n", re.content_size()));
+    } else {
+        send_buffers_queue.emplace_back(allocate_string("\r\n"));
     }
 
     for (auto header { response.headers.rbegin() }; header != response.headers.rend(); header++) {
         send_buffers_queue.emplace_back(allocate_string("{}: {}\r\n", header->name, header->value));
     }
 
-    send_buffers_queue.emplace_back(allocate_string("HTTP/{} {}\r\n", response.http_version, static_cast<int>(response.status), STATUS_CODE_REASON[response.status]));
+    send_buffers_queue.emplace_back(allocate_string("HTTP/{} {} {}\r\n", response.http_version, static_cast<int>(response.status), STATUS_CODE_REASON[response.status]));
 
     return HttpResponseWriter { .pending_file = std::move(pending_file), .pending_buffers = std::move(send_buffers_queue) };
 }
 
 bool HttpResponseWriter::is_done_sending()
 {
-    return pending_buffers.empty() && (cur_bytes_to_send == cur_bytes_sent) && (pending_file && pending_file->is_done_sending());
+    return pending_buffers.empty() && (cur_bytes_to_send == cur_bytes_sent) && (!pending_file || (pending_file && pending_file->is_done_sending()));
 }
 
 void HttpResponseWriter::set_next_currently_sending()
@@ -153,18 +156,20 @@ HttpRequestReadWriteStatus HttpResponseWriter::write_response(int receiver_fd)
         }
         return HttpRequestReadWriteStatus::NeedContinue;
     } else {
-        off_t len { pending_file->bytes_to_send };
-        auto error = sendfile(pending_file->fd, receiver_fd, pending_file->bytes_sent, &len, nullptr, 0);
+        auto [bytes_sent, error] = ssendfile(receiver_fd,
+            pending_file->file->fd,
+            pending_file->bytes_sent,
+            pending_file->bytes_to_send);
         if (error == -1) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                pending_file->bytes_sent += len;
-                pending_file->bytes_to_send -= len;
+                pending_file->bytes_sent += bytes_sent;
+                pending_file->bytes_to_send -= bytes_sent;
                 return HttpRequestReadWriteStatus::NeedContinue;
             }
             return HttpRequestReadWriteStatus::Error;
         }
-        pending_file->bytes_sent += len;
-        pending_file->bytes_to_send -= len;
+        pending_file->bytes_sent += bytes_sent;
+        pending_file->bytes_to_send -= bytes_sent;
         if (pending_file->is_done_sending()) {
             return HttpRequestReadWriteStatus::Finished;
         }

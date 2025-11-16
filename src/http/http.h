@@ -1,7 +1,6 @@
 #pragma once
 
 #include "utils/files.h"
-#include "utils/logging.h"
 #include <algorithm>
 #include <cstddef>
 #include <map>
@@ -10,6 +9,7 @@
 #include <string>
 #include <string_view>
 #include <unistd.h>
+#include <variant>
 #include <vector>
 
 struct HttpHeader {
@@ -19,8 +19,7 @@ struct HttpHeader {
 
 class HttpEntity {
     std::vector<HttpHeader> m_headers;
-    std::unique_ptr<char const[]> m_content;
-    int m_file_fd { -1 };
+    std::variant<std::monostate, std::unique_ptr<char const[]>, std::unique_ptr<File>> m_content;
     size_t m_content_size;
 
 public:
@@ -31,15 +30,16 @@ public:
     {
     }
 
-    HttpEntity(FileResponse& file)
-        : m_headers { HttpHeader { .name = "Content-Type", .value = file.mime_type } }
-        , m_file_fd { file.fd }
-        , m_content_size { file.size }
+    HttpEntity(FileResponse& fresponse)
+        : m_headers { HttpHeader { .name = "Content-Type", .value = fresponse.file->mime_type } }
+        , m_content { std::move(fresponse.file) }
+        , m_content_size { std::get<std::unique_ptr<File>>(m_content)->size }
     {
     }
 
     HttpEntity(std::string const& content_type, std::string content)
         : m_headers { HttpHeader { .name = "Content-Type", .value = content_type } }
+        , m_content {}
         , m_content_size { content.size() }
     {
         auto buff { std::make_unique<char[]>(m_content_size) };
@@ -47,19 +47,19 @@ public:
         m_content = std::move(buff);
     }
 
-    bool is_file() const
+    bool holds_file()
     {
-        return (m_file_fd != -1);
+        return std::holds_alternative<std::unique_ptr<File>>(m_content);
     }
 
-    int file_fd() const
+    std::unique_ptr<File>* file()
     {
-        return m_file_fd;
+        return std::get_if<std::unique_ptr<File>>(&m_content);
     }
 
-    std::unique_ptr<char const[]>& content()
+    std::unique_ptr<char const[]>* content()
     {
-        return m_content;
+        return std::get_if<std::unique_ptr<char const[]>>(&m_content);
     }
 
     size_t content_size() const
@@ -130,7 +130,7 @@ enum class HttpRequestReadWriteStatus {
 };
 
 struct PendingFile {
-    int fd;
+    std::unique_ptr<File> file;
     off_t bytes_to_send;
     off_t bytes_sent { 0 };
 
@@ -139,24 +139,10 @@ struct PendingFile {
         return bytes_to_send == 0;
     }
 
-    PendingFile(int new_fd, off_t size)
-        : fd { new_fd }
-        , bytes_to_send { size }
+    PendingFile(std::unique_ptr<File> file_)
+        : file { std::move(file_) }
+        , bytes_to_send { static_cast<off_t>(file->size) }
     {
-    }
-
-    PendingFile(PendingFile const&) = delete;
-    PendingFile& operator=(PendingFile const&) = delete;
-
-    PendingFile(PendingFile&&) = default;
-    PendingFile& operator=(PendingFile&&) = default;
-
-    ~PendingFile()
-    {
-        if (fd >= 0) {
-            LOG_INFO("Cleaning up the {} file descriptor.", fd);
-            close(fd);
-        }
     }
 };
 

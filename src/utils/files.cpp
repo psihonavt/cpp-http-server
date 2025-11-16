@@ -34,14 +34,13 @@ FileResponse serve_file(std::string_view request_path, fs::path const& server_ro
             return FileResponse { "Not a file" };
         }
 
-        int file_fd = open(requested.string().c_str(), O_RDONLY);
+        int file_fd = open(requested_cannonical.string().c_str(), O_RDONLY);
         if (file_fd == -1) {
             return FileResponse(strerror(errno));
         }
 
-        auto size { std::filesystem::file_size(requested) };
+        auto size { std::filesystem::file_size(requested_cannonical) };
         auto mime_type { get_mime_type(requested_cannonical.filename().string()) };
-        assert(is_fd_open(file_fd));
         return FileResponse { file_fd, size, mime_type };
     } catch (fs::filesystem_error const& e) {
         return FileResponse { e.what(), e.code() };
