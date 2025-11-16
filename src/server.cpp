@@ -1,9 +1,9 @@
 #include "config/server.h"
 #include "CLI/CLI.hpp"
 #include "http/http.h"
-#include "net.h"
 #include "utils/files.h"
 #include "utils/logging.h"
+#include "utils/net.h"
 #include <CLI/CLI.hpp>
 #include <_string.h>
 #include <arpa/inet.h>
@@ -58,6 +58,7 @@ HttpResponse handle_http_request(HttpRequest const& req, std::filesystem::path c
                     .status = ResponseCode::NOT_FOUND,
                     .http_version = req.version,
                     .headers = {},
+                    .entity = std::make_unique<HttpEntity>("text/plain", "Not Found"),
                 };
             }
         } else {
@@ -65,7 +66,7 @@ HttpResponse handle_http_request(HttpRequest const& req, std::filesystem::path c
                 .status = ResponseCode::OK,
                 .http_version = req.version,
                 .headers = {},
-                .entity = std::make_unique<HttpEntity>(maybe_file.mime_type, std::move(maybe_file.content), maybe_file.size),
+                .entity = std::make_unique<HttpEntity>(maybe_file),
             };
         }
     }

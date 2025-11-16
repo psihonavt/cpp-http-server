@@ -1,5 +1,6 @@
 #pragma once
 
+#include "utils/files.h"
 #include <algorithm>
 #include <cstddef>
 #include <map>
@@ -7,6 +8,8 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unistd.h>
+#include <variant>
 #include <vector>
 
 struct HttpHeader {
@@ -16,7 +19,7 @@ struct HttpHeader {
 
 class HttpEntity {
     std::vector<HttpHeader> m_headers;
-    std::unique_ptr<char const[]> m_content;
+    std::variant<std::monostate, std::unique_ptr<char const[]>, std::unique_ptr<File>> m_content;
     size_t m_content_size;
 
 public:
@@ -27,20 +30,37 @@ public:
     {
     }
 
-    HttpEntity(std::string const& content_type, std::string content)
+    HttpEntity(FileResponse& fresponse)
+        : m_headers { HttpHeader { .name = "Content-Type", .value = fresponse.file->mime_type } }
+        , m_content { std::move(fresponse.file) }
+        , m_content_size { static_cast<size_t>(std::get<std::unique_ptr<File>>(m_content)->size) }
+    {
+    }
+
+    HttpEntity(std::string const& content_type, std::string const& content)
         : m_headers { HttpHeader { .name = "Content-Type", .value = content_type } }
+        , m_content {}
         , m_content_size { content.size() }
+
     {
         auto buff { std::make_unique<char[]>(m_content_size) };
         std::copy(content.begin(), content.end(), buff.get());
         m_content = std::move(buff);
     }
 
-    ~HttpEntity() = default;
-
-    std::unique_ptr<char const[]>& content()
+    bool holds_file() const
     {
-        return m_content;
+        return std::holds_alternative<std::unique_ptr<File>>(m_content);
+    }
+
+    std::unique_ptr<File>* file()
+    {
+        return std::get_if<std::unique_ptr<File>>(&m_content);
+    }
+
+    std::unique_ptr<char const[]>* content()
+    {
+        return std::get_if<std::unique_ptr<char const[]>>(&m_content);
     }
 
     size_t content_size() const
@@ -110,7 +130,26 @@ enum class HttpRequestReadWriteStatus {
     NeedContinue,
 };
 
+struct PendingFile {
+    std::unique_ptr<File> file;
+    off_t bytes_to_send;
+    off_t bytes_sent { 0 };
+
+    bool is_done_sending()
+    {
+        return bytes_to_send == 0;
+    }
+
+    PendingFile(std::unique_ptr<File> file_)
+        : file { std::move(file_) }
+        , bytes_to_send { file->size }
+    {
+    }
+};
+
 struct HttpResponseWriter {
+    std::unique_ptr<PendingFile> pending_file { nullptr };
+    bool is_sending_file { false };
     std::vector<pending_send_buffer_t> pending_buffers;
     std::unique_ptr<char const[]> cur_send_buffer { nullptr };
     size_t cur_bytes_to_send { 0 };
