@@ -37,17 +37,18 @@ public:
     {
     }
 
-    HttpEntity(std::string const& content_type, std::string content)
+    HttpEntity(std::string const& content_type, std::string const& content)
         : m_headers { HttpHeader { .name = "Content-Type", .value = content_type } }
         , m_content {}
         , m_content_size { content.size() }
+
     {
         auto buff { std::make_unique<char[]>(m_content_size) };
         std::copy(content.begin(), content.end(), buff.get());
         m_content = std::move(buff);
     }
 
-    bool holds_file()
+    bool holds_file() const
     {
         return std::holds_alternative<std::unique_ptr<File>>(m_content);
     }

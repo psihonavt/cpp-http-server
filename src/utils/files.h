@@ -12,7 +12,6 @@ struct File {
     std::string mime_type;
     off_t size;
 
-public:
     File(int fd, std::string const& mime_type, off_t size)
         : fd { fd }
         , mime_type { mime_type }
@@ -23,19 +22,31 @@ public:
     File(File const&) = delete;
     File& operator=(File const&) = delete;
 
-    File(File&&) = default;
-    File& operator=(File&&) = default;
+    File(File&& f) noexcept
+        : fd { f.fd }
+        , mime_type { f.mime_type }
+        , size { f.size }
+    {
+        f.fd = -1;
+    }
+
+    File& operator=(File&& f)
+    {
+        if (this == &f) {
+            return *this;
+        }
+        fd = f.fd;
+        size = f.size;
+        mime_type = f.mime_type;
+        f.fd = -1;
+        return *this;
+    }
 
     ~File()
     {
         if (fd >= 0) {
             close(fd);
         }
-    }
-
-    operator int()
-    {
-        return fd;
     }
 };
 
