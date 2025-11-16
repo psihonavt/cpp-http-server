@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <iostream>
 #include <sys/fcntl.h>
+#include <sys/stat.h>
 
 namespace fs = std::filesystem;
 
@@ -38,8 +39,14 @@ FileResponse serve_file(std::string_view request_path, fs::path const& server_ro
         if (file_fd == -1) {
             return FileResponse(strerror(errno));
         }
+        struct stat st;
+        off_t size;
+        if (fstat(file_fd, &st) == 0) {
+            size = st.st_size;
+        } else {
+            return FileResponse { "Couldn't `fstat` the file" };
+        }
 
-        auto size { std::filesystem::file_size(requested_cannonical) };
         auto mime_type { get_mime_type(requested_cannonical.filename().string()) };
         return FileResponse { file_fd, size, mime_type };
     } catch (fs::filesystem_error const& e) {

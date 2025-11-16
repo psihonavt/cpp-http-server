@@ -33,7 +33,7 @@ public:
     HttpEntity(FileResponse& fresponse)
         : m_headers { HttpHeader { .name = "Content-Type", .value = fresponse.file->mime_type } }
         , m_content { std::move(fresponse.file) }
-        , m_content_size { std::get<std::unique_ptr<File>>(m_content)->size }
+        , m_content_size { static_cast<size_t>(std::get<std::unique_ptr<File>>(m_content)->size) }
     {
     }
 
@@ -141,7 +141,7 @@ struct PendingFile {
 
     PendingFile(std::unique_ptr<File> file_)
         : file { std::move(file_) }
-        , bytes_to_send { static_cast<off_t>(file->size) }
+        , bytes_to_send { file->size }
     {
     }
 };

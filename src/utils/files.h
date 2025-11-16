@@ -10,10 +10,10 @@
 struct File {
     int fd;
     std::string mime_type;
-    size_t size;
+    off_t size;
 
 public:
-    File(int fd, std::string const& mime_type, size_t size)
+    File(int fd, std::string const& mime_type, off_t size)
         : fd { fd }
         , mime_type { mime_type }
         , size { size }
@@ -46,7 +46,7 @@ struct FileResponse {
 
     std::unique_ptr<File> file;
 
-    FileResponse(int newfd, size_t size, std::string& mime_type)
+    FileResponse(int newfd, off_t size, std::string& mime_type)
         : is_success { true }
         , error {}
         , error_code {}
