@@ -9,6 +9,7 @@ namespace Config {
 namespace Server {
 constexpr int LISTEN_BACKLOG { 20 };
 constexpr size_t RECV_BUFFER_SIZE { 4096 };
+constexpr size_t SEND_BUFFER_SIZE { 8192 };
 constexpr int DEFAULT_PORT { 8081 };
 
 inline size_t get_hostname_lengh()

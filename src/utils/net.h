@@ -53,7 +53,7 @@ public:
         return m_sockfd;
     }
 
-    int const& fd()
+    int const& fd() const
     {
         return m_sockfd;
     }
@@ -83,7 +83,7 @@ class PfdsHolder {
 
 public:
     void handle_change(PfdsChange const& change);
-    int do_poll();
+    int do_poll(int timeout_ms = -1);
     std::vector<pollfd> const& all();
 };
 
@@ -99,3 +99,5 @@ public:
  *  even with the error set, it's still possible that some bytes were send (e.g., in non-blocking sockets)
  */
 std::pair<off_t, int> ssendfile(int socket_fd, int file_fd, off_t offset, off_t bytes_to_send);
+
+int get_SNDBUF(int fd);

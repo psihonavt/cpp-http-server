@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <charconv>
 #include <optional>
+#include <sstream>
 #include <system_error>
 
 std::string& str_tolower(std::string& s)
@@ -25,4 +26,15 @@ std::optional<int> str_toint(std::string_view s)
         return result;
     }
     return {};
+}
+
+std::string str_vector_join(std::vector<std::string> const& v, std::string_view sep)
+{
+    std::ostringstream oss;
+    std::string curr_sep { "" };
+    for (auto const& el : v) {
+        oss << curr_sep << el;
+        curr_sep = sep;
+    }
+    return oss.str();
 }

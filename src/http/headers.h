@@ -3,7 +3,6 @@
 #include <map>
 #include <optional>
 #include <string>
-#include <string_view>
 #include <vector>
 
 namespace Http {
@@ -22,6 +21,11 @@ struct Headers {
 
     std::optional<int> content_length();
     std::optional<std::string> content_type();
+
+    std::map<std::string, std::vector<std::string>> const& all() const
+    {
+        return headers;
+    }
 };
 
 Headers get_default_headers(int content_length, std::string const& content_type);

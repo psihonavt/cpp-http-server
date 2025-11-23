@@ -87,9 +87,9 @@ void PfdsHolder::remove_fd_events(int fd, short events)
     pfd.events &= ~events;
 }
 
-int PfdsHolder::do_poll()
+int PfdsHolder::do_poll(int timeout_ms)
 {
-    return poll(m_pfds.data(), static_cast<nfds_t>(m_pfds.size()), -1);
+    return poll(m_pfds.data(), static_cast<nfds_t>(m_pfds.size()), timeout_ms);
 }
 
 std::vector<pollfd> const& PfdsHolder::all()
@@ -127,4 +127,14 @@ std::pair<off_t, int> ssendfile(int socket_fd, int file_fd, off_t offset, off_t 
     }
     return { len, 0 };
 #endif
+}
+
+int get_SNDBUF(int fd)
+{
+    size_t sendbuf;
+    socklen_t len { sizeof(size_t) };
+    if (getsockopt(fd, SOL_SOCKET, SO_SNDBUF, &sendbuf, &len) != 0) {
+        return -1;
+    }
+    return static_cast<int>(sendbuf);
 }
