@@ -1,5 +1,4 @@
 #include "net.h"
-#include "config/platform.h"
 #include "config/server.h"
 #include <arpa/inet.h>
 #include <cassert>
@@ -115,26 +114,4 @@ void PfdsHolder::handle_change(PfdsChange const& change)
     default:
         assert(false && "unexpected action");
     }
-}
-
-std::pair<off_t, int> ssendfile(int socket_fd, int file_fd, off_t offset, off_t bytes_to_send)
-{
-#ifdef OSX_PLATFORM
-    off_t len { bytes_to_send };
-    auto error = sendfile(file_fd, socket_fd, offset, &len, nullptr, 0);
-    if (error == -1) {
-        return { len, error };
-    }
-    return { len, 0 };
-#endif
-}
-
-int get_SNDBUF(int fd)
-{
-    size_t sendbuf;
-    socklen_t len { sizeof(size_t) };
-    if (getsockopt(fd, SOL_SOCKET, SO_SNDBUF, &sendbuf, &len) != 0) {
-        return -1;
-    }
-    return static_cast<int>(sendbuf);
 }
