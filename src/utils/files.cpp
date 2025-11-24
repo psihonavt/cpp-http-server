@@ -1,12 +1,10 @@
 #include "files.h"
 #include "http/mime.h"
-#include "logging.h"
 #include <algorithm>
 #include <cassert>
 #include <cstring>
 #include <filesystem>
-#include <sys/fcntl.h>
-#include <sys/stat.h>
+#include <fstream>
 
 namespace fs = std::filesystem;
 
@@ -29,38 +27,11 @@ FileResponse serve_file(std::string_view request_path, fs::path const& server_ro
             return FileResponse { "File not found (bad symlinks?)" };
         }
 
-        int file_fd = open(requested_cannonical.string().c_str(), O_RDONLY);
-        if (file_fd == -1) {
-            return FileResponse(strerror(errno));
-        }
-        struct stat st;
-        off_t size;
-
-        if (fstat(file_fd, &st) == 0) {
-            size = st.st_size;
-        } else {
-            close(file_fd);
-            return FileResponse { "Couldn't `fstat` the file" };
-        }
-
-        if (!S_ISREG(st.st_mode)) {
-            close(file_fd);
-            return FileResponse { "Not a file" };
-        }
-
+        std::ifstream file { requested_cannonical };
+        auto size { fs::file_size(requested_cannonical) };
         auto mime_type { get_mime_type(requested_cannonical.filename().string()) };
-        return FileResponse { file_fd, size, mime_type };
+        return FileResponse { file, size, mime_type };
     } catch (fs::filesystem_error const& e) {
         return FileResponse { e.what(), e.code() };
     }
-}
-
-bool is_fd_open(int fd)
-{
-    int err { fcntl(fd, F_GETFD) };
-    if (err == -1) {
-        LOG_WARN("fd {} isn't opened: {}", fd, strerror(errno));
-        return false;
-    }
-    return true;
 }

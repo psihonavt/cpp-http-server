@@ -1,7 +1,6 @@
 #include "catch2/catch_test_macros.hpp"
 #include "http/headers.h"
 #include "http/response.h"
-#include "utils/logging.h"
 #include "utils/net.h"
 #include <cstddef>
 #include <cstring>
@@ -33,12 +32,10 @@ TEST_CASE("Testing HTTP response writer")
 
     SECTION("Empty body")
     {
-        auto no_body_response = Http::Response {
-            .version = "1.1",
-            .status = Http::StatusCode::OK,
-            .headers = Http::get_default_headers(0, "plain/text"),
-            .body = std::nullopt
-        };
+        auto no_body_response = Http::Response(
+            Http::StatusCode::OK,
+            Http::get_default_headers(0, "plain/text"),
+            std::nullopt);
 
         Http::ResponseWriter w { no_body_response, sender };
         while (!w.is_done()) {
@@ -52,12 +49,10 @@ TEST_CASE("Testing HTTP response writer")
         std::string content { "a small body" };
         auto size { content.size() };
 
-        auto response = Http::Response {
-            .version = "1.1",
-            .status = Http::StatusCode::OK,
-            .headers = Http::get_default_headers(0, "plain/text"),
-            .body = Http::ResponseBody { std::make_unique<std::stringstream>(content), size }
-        };
+        auto response = Http::Response(
+            Http::StatusCode::OK,
+            Http::get_default_headers(0, "plain/text"),
+            Http::ResponseBody { std::make_unique<std::stringstream>(content), size });
 
         Http::ResponseWriter w { response, sender };
         while (!w.is_done()) {
@@ -81,12 +76,10 @@ TEST_CASE("Testing HTTP response writer")
         auto bfss { std::make_unique<std::stringstream>() };
         bfss->str(std::move(*bfs));
 
-        auto response = Http::Response {
-            .version = "1.1",
-            .status = Http::StatusCode::OK,
-            .headers = Http::get_default_headers(0, "plain/text"),
-            .body = Http::ResponseBody(std::move(bfss), size)
-        };
+        auto response = Http::Response(
+            Http::StatusCode::OK,
+            Http::get_default_headers(0, "plain/text"),
+            Http::ResponseBody(std::move(bfss), size));
 
         Http::ResponseWriter w { response, sender };
 
@@ -104,6 +97,6 @@ TEST_CASE("Testing HTTP response writer")
             }
         }
 
-        REQUIRE(written_bytes < 1024 * 2048);
+        REQUIRE(written_bytes > 1024 * 2048);
     }
 }

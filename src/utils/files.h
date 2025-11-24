@@ -1,7 +1,9 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <string_view>
 #include <system_error>
@@ -55,14 +57,18 @@ struct FileResponse {
     std::string error;
     std::error_code error_code;
 
-    std::unique_ptr<File> file;
+    std::unique_ptr<std::ifstream> file;
+    uintmax_t file_size;
+    std::string mime_type;
 
-    FileResponse(int newfd, off_t size, std::string& mime_type)
+    FileResponse(std::ifstream& f, uintmax_t s, std::string& mt)
         : is_success { true }
         , error {}
         , error_code {}
+        , file { std::make_unique<std::ifstream>(std::move(f)) }
+        , file_size { s }
+        , mime_type { std::move(mt) }
     {
-        file = std::make_unique<File>(newfd, mime_type, size);
     }
 
     FileResponse(std::string const& err)
