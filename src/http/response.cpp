@@ -13,8 +13,7 @@
 
 namespace Http {
 
-response_write_result
-ResponseWriter::write_status_line()
+response_write_result ResponseWriter::write_status_line()
 
 {
     if (m_status != Status::WRITING_STATUS_LINE) {
