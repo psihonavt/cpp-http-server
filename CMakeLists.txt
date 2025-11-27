@@ -45,8 +45,13 @@ add_library(utils STATIC
   src/utils/llist.cpp
   src/utils/files.cpp
   src/utils/net.cpp
+  src/utils/helpers.cpp
+  src/http/errors.cpp
   src/http/parser.cpp
   src/http/http.cpp
+  src/http/headers.cpp
+  src/http/request.cpp
+  src/http/response.cpp
   src/http/mime.cpp
 )
 target_include_directories(utils PUBLIC ${CMAKE_SOURCE_DIR}/src)
@@ -78,14 +83,18 @@ FetchContent_MakeAvailable(Catch2)
 
 add_executable(tests
   tests/utils/test_llist.cpp
+  tests/utils/test_helpers.cpp
+  tests/http/test_response.cpp
   tests/http/test_http_parser.cpp
+  tests/http/test_headers.cpp
   tests/http/test_mime.cpp
   tests/http/test_urls.cpp
+  tests/main.cpp
 )
 
 target_compile_options(tests PRIVATE ${MY_COMPILE_FLAGS} ${MY_SANITIZING_FLAGS})
 target_link_options(tests PRIVATE ${MY_SANITIZING_FLAGS})
-target_link_libraries(tests PRIVATE utils Catch2::Catch2WithMain)
+target_link_libraries(tests PRIVATE utils Catch2::Catch2)
 
 include(CTest)
 include(Catch)

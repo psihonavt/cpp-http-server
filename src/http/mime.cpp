@@ -1,5 +1,5 @@
 #include "mime.h"
-#include <algorithm>
+#include "utils/helpers.h"
 #include <cctype>
 #include <map>
 #include <ranges>
@@ -20,12 +20,6 @@ std::map<std::string, std::string> const known_mime_types {
     { "css", "text/css" },
 
 };
-
-std::string& str_tolower(std::string& s)
-{
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return std::tolower(c); });
-    return s;
-}
 
 std::string get_mime_type(std::string_view filename)
 {

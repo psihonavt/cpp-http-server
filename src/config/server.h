@@ -10,6 +10,7 @@ namespace Server {
 constexpr int LISTEN_BACKLOG { 20 };
 constexpr size_t RECV_BUFFER_SIZE { 4096 };
 constexpr int DEFAULT_PORT { 8081 };
+constexpr size_t HEADERS_LIMIT_SIZE { 8192 };
 
 inline size_t get_hostname_lengh()
 {

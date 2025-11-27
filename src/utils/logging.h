@@ -24,9 +24,9 @@ class Logger {
 public:
     Logger() = default;
 
-    void add_console()
+    void add_console(std::ostream& cout = std::cout)
     {
-        sinks_.push_back(&std::cout);
+        sinks_.push_back(&cout);
     }
 
     void add_file(std::string const& filename)

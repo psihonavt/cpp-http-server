@@ -1,5 +1,4 @@
 #include "net.h"
-#include "config/platform.h"
 #include "config/server.h"
 #include <arpa/inet.h>
 #include <cassert>
@@ -87,9 +86,9 @@ void PfdsHolder::remove_fd_events(int fd, short events)
     pfd.events &= ~events;
 }
 
-int PfdsHolder::do_poll()
+int PfdsHolder::do_poll(int timeout_ms)
 {
-    return poll(m_pfds.data(), static_cast<nfds_t>(m_pfds.size()), -1);
+    return poll(m_pfds.data(), static_cast<nfds_t>(m_pfds.size()), timeout_ms);
 }
 
 std::vector<pollfd> const& PfdsHolder::all()
@@ -115,16 +114,4 @@ void PfdsHolder::handle_change(PfdsChange const& change)
     default:
         assert(false && "unexpected action");
     }
-}
-
-std::pair<off_t, int> ssendfile(int socket_fd, int file_fd, off_t offset, off_t bytes_to_send)
-{
-#ifdef OSX_PLATFORM
-    off_t len { bytes_to_send };
-    auto error = sendfile(file_fd, socket_fd, offset, &len, nullptr, 0);
-    if (error == -1) {
-        return { len, error };
-    }
-    return { len, 0 };
-#endif
 }
