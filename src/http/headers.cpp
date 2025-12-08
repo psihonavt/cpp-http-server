@@ -1,6 +1,8 @@
 #include "headers.h"
 #include "utils/helpers.h"
+#include <format>
 #include <optional>
+#include <ostream>
 #include <string>
 #include <vector>
 
@@ -65,6 +67,21 @@ std::string canonize_header_field(std::string const& field)
         }
     }
     return result;
+}
+
+bool operator==(Headers const& h1, Headers const& h2)
+{
+    return h1.headers == h2.headers;
+}
+
+std::ostream& operator<<(std::ostream& cout, Headers const& h)
+{
+    cout << "{\n";
+    for (auto& [field, value] : h.all()) {
+        cout << std::format("\t{}: {}\n", field, str_vector_join(value));
+    }
+    cout << "}";
+    return cout;
 }
 
 }

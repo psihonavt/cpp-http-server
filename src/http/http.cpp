@@ -1,5 +1,4 @@
 #include "http.h"
-#include "http/parser.h"
 #include "utils/logging.h"
 #include <cassert>
 #include <cerrno>
@@ -76,7 +75,7 @@ http_reader_result_t HttpRequestReader::read_request(int sender_fd)
     }
 
     bytes_read += static_cast<size_t>(n);
-    bool is_finished = parse_http_request(reading_buffer.get(), static_cast<size_t>(bytes_read), &request);
+    bool is_finished = false;
 
     // no support for pipelining http requests; one buffer - one request.
     if (is_finished) {

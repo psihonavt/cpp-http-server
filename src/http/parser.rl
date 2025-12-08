@@ -1,45 +1,58 @@
 #include "parser.h"
+#include "utils/logging.h"
 #include <cstring>
-#include <memory>
+#include <cstring>
 
 %%{
 
 machine http_parser;
+access this->;
 
 action mark {
   mark = fpc;
 }
 
 action get_http_version {
-  ctx->version.assign(mark, fpc - mark);
+  store_parsed(mark, fpc, result.proto);
 }
 
 action get_http_method {
-  ctx->method.assign(mark, fpc - mark);
+  store_parsed(mark, fpc, result.method);
 }
 
 action get_hostname {
-  ctx->uri.hostname.assign(mark, fpc - mark);
+  store_parsed(mark, fpc, result.uri.hostname);
 }
 
 action get_query {
-  ctx->uri.query.assign(mark, fpc - mark);
+  store_parsed(mark, fpc, result.uri.query);
 }
 
 action get_fragment {
-  ctx->uri.fragment.assign(mark, fpc - mark);
+  store_parsed(mark, fpc, result.uri.fragment);
 }
 
 action get_path {
-  ctx->uri.path.assign(mark, fpc - mark);
+  store_parsed(mark, fpc, result.uri.path);
 }
 
 action get_scheme {
-  ctx->uri.scheme.assign(mark, fpc - mark);
+  store_parsed(mark, fpc, result.uri.scheme);
 }
 
 action get_port {
-  ctx->uri.port.assign(mark, fpc - mark);
+  store_parsed(mark, fpc, result.uri.port);
+}
+
+action get_field_value {
+  store_parsed_header_value(mark, fpc);
+}
+
+action get_field_name {
+  store_parsed_header_name(mark, fpc);
+}
+
+action done {
 }
 
 #### HTTP protocl grammar #####
@@ -47,6 +60,9 @@ CRLF = "\r\n";
 CTL = (cntrl | 127);
 separators = ("(" | ")" | "<" | ">" | "@" | "," | ";" | ":" | "\\" | "\"" | "/" | "[" | "]" | "?" | "=" | "{" | "}" | " " | "\t");
 ascii_space = " ";
+ws = ascii_space | "\t";
+ows = ws*;
+rws = ws+;
 uri_percent_encoded = ("%" xdigit xdigit);
 uri_reserved = (";" | "/" | "?" | ":" | "@" | "&" | "=" | "+" | "$" | ",");
 mark = ("-" | "_" | "." | "!" | "~" | "*" | "'" | "(" | ")");
@@ -97,33 +113,96 @@ request_uri = ("*" | absolute_uri | relative_uri );
 http_version_number = (digit+ "." digit+);
 http_version = "HTTP/" http_version_number >mark %get_http_version; 
 
-request_line = http_method ascii_space request_uri ascii_space http_version CRLF any*;
+request_line = http_method ascii_space request_uri ascii_space http_version CRLF;
 
-main := request_line;
+field_value = any* >mark %get_field_value;
+field_name = (token -- ":")+ >mark %get_field_name;
+message_header = field_name ":" ows field_value:> CRLF;
+
+request = request_line message_header* (CRLF @done);
+
+main := request;
 
 write data;
 
 }%%
 
-bool parse_http_request(char const* data, size_t len, HttpRequest* result) {
-    int cs; // current state
-    const char* p {data}; // current position
-    const char* pe {data + len}; // end position
-    const char* eof {pe}; // EOF position
+namespace Http {
 
-    HttpRequest ctx_storage {};
-    HttpRequest* ctx {&ctx_storage};
+void RequestParser::store_parsed(char const* start, char const* end, std::string& target){
+  if (!start || !end){
+    throw std::runtime_error("invalid start/end pointers");
+  }
+  target = partial_buf + std::string(start, static_cast<size_t>(end - start));
+  mark_active = false;
+  partial_buf = "";
+}
 
-    // a mark for substring extraction
-    const char* mark = nullptr;
-    
-    %% write init;
+void RequestParser::store_parsed_header_value(char const* start, char const* end){
+  if (!start || !end){
+    throw std::runtime_error("invalid start/end pointers");
+  }
+  if (cur_header_name == ""){
+    throw std::runtime_error("a header name must not be empty");
+  }
+  auto value = partial_buf + std::string(start, static_cast<size_t>(end - start));
+
+  size_t ws_pos {value.find_last_not_of(" \t")};
+  if (ws_pos != std::string::npos){
+    value.erase(ws_pos + 1);
+  }
+
+  result.headers.set(cur_header_name, value);
+
+  mark_active = false;
+  partial_buf = "";
+  cur_header_name = "";
+}
+
+void RequestParser::store_parsed_header_name(char const* start, char const* end){
+  if (!start || !end){
+    throw std::runtime_error("invalid start/end pointers");
+  }
+  if (cur_header_name != ""){
+    throw std::runtime_error("a header must be empty");
+  }
+  cur_header_name = partial_buf + std::string(start, static_cast<size_t>(end - start));
+  mark_active = false;
+  partial_buf = "";
+}
+
+void RequestParser::init(){
+  cur_header_name = "";
+  partial_buf = "";
+  mark_active = false;
+  result = Request{};
+  %% write init;
+}
+
+RequestParsingStatus RequestParser::parse_request(char const* data, size_t len, char const* eof) {
+    const char* p {data}; 
+    const char* pe {data + len}; 
+
+    char const* mark {nullptr};
+    if (mark_active){
+      mark = p;
+    }
+
     %% write exec;
 
     if (cs >= http_parser_first_final) {
-      *result = std::move(ctx_storage);
-      return true;
+      return RequestParsingStatus::Finished;
+    } else if (cs == http_parser_error) {
+      return RequestParsingStatus::Error;
+    } else if (!eof) {
+      if (!mark){
+        throw std::runtime_error("mark can not be null");
+      }
+      partial_buf = std::string(mark, static_cast<size_t>(pe - mark));
+      mark_active = true;
+      return RequestParsingStatus::NeedContinue;
     } else {
-      return false;
+      return RequestParsingStatus::Error;
     }
   }
+};
