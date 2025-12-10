@@ -1,3 +1,5 @@
+#pragma once
+
 #include "http/headers.h"
 
 namespace Http {

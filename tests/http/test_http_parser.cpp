@@ -1,6 +1,6 @@
 #include "catch2/catch_test_macros.hpp"
 #include "http/headers.h"
-#include "http/parser.h"
+#include "http/req_parser.h"
 #include <string>
 #include <tuple>
 #include <utility>
@@ -100,7 +100,7 @@ TEST_CASE("Request Line parsing", "[http_parser] [request_line]")
 
         SECTION(request_line)
         {
-            auto status { parser.parse_request(request_line.data(), request_line.size(), nullptr) };
+            auto status { parser.parse_request(request_line.data(), request_line.size(), 0) };
             REQUIRE(status == Http::RequestParsingStatus::Finished);
             check_parse_request_line(parser.result, expected);
         }
@@ -113,9 +113,9 @@ TEST_CASE("Request parsing chunked data", "[http_parser]")
     std::string recv_buf2 { "lo_world HTTP/1.1\r\n\r\n" };
     Http::RequestParser parser {};
     parser.init();
-    auto status { parser.parse_request(recv_buf1.data(), recv_buf1.size(), nullptr) };
-    REQUIRE(status == Http::RequestParsingStatus::NeedContinue);
-    status = parser.parse_request(recv_buf2.data(), recv_buf2.size(), nullptr);
+    auto status { parser.parse_request(recv_buf1.data(), recv_buf1.size(), 0) };
+    REQUIRE(status == Http::RequestParsingStatus::NeedMoreData);
+    status = parser.parse_request(recv_buf2.data(), recv_buf2.size(), 0);
     REQUIRE(status == Http::RequestParsingStatus::Finished);
     REQUIRE(parser.result.uri.path == "/hello_world");
     check_parse_request_line(parser.result,
@@ -136,16 +136,16 @@ TEST_CASE("Request parsing bad requests", "[http_parser]")
     {
         std::string recv_buf1 { "GET /hel" };
         std::string recv_buf2 { "lo_world HTTP/1.12.3\r\n\r\n" };
-        auto status { parser.parse_request(recv_buf1.data(), recv_buf1.size(), nullptr) };
-        REQUIRE(status == Http::RequestParsingStatus::NeedContinue);
-        status = parser.parse_request(recv_buf2.data(), recv_buf2.size(), nullptr);
+        auto status { parser.parse_request(recv_buf1.data(), recv_buf1.size(), 0) };
+        REQUIRE(status == Http::RequestParsingStatus::NeedMoreData);
+        status = parser.parse_request(recv_buf2.data(), recv_buf2.size(), 0);
         REQUIRE(status == Http::RequestParsingStatus::Error);
     }
 
     SECTION("very incomplete status line")
     {
         std::string recv_buf { "GET /helll\r\n\r\n" };
-        auto status { parser.parse_request(recv_buf.data(), recv_buf.size(), nullptr) };
+        auto status { parser.parse_request(recv_buf.data(), recv_buf.size(), 0) };
         REQUIRE(status == Http::RequestParsingStatus::Error);
     }
 }
@@ -179,7 +179,7 @@ TEST_CASE("Headers parsing", "[http_parser]")
     for (auto& [name, request, headers] : data) {
         SECTION(name)
         {
-            auto status { parser.parse_request(request.data(), request.size(), nullptr) };
+            auto status { parser.parse_request(request.data(), request.size(), 0) };
             REQUIRE(status == Http::RequestParsingStatus::Finished);
             REQUIRE(parser.result.headers == headers);
         }
@@ -202,11 +202,33 @@ TEST_CASE("Chunked headers parsing", "[http_parser]")
         {
             auto status { Http::RequestParsingStatus::Error };
             for (auto& chunk : chunks) {
-                status = parser.parse_request(chunk.data(), chunk.size(), nullptr);
+                status = parser.parse_request(chunk.data(), chunk.size(), 0);
                 REQUIRE(status != Http::RequestParsingStatus::Error);
             }
             REQUIRE(status == Http::RequestParsingStatus::Finished);
             REQUIRE(parser.result.headers == headers);
         }
     }
+}
+
+TEST_CASE("Multiple requests in a buffer", "[http_parser]")
+{
+    std::string buffer { "GET / HTTP/1.1\r\n\r\nGET /favicon.ico HTTP/1.1\r\n\r\nPOST" };
+    Http::RequestParser parser {};
+    parser.init();
+    auto status { parser.parse_request(buffer.data(), buffer.size(), 0) };
+    REQUIRE(status == Http::RequestParsingStatus::Finished);
+    REQUIRE(parser.bytes_read == 18);
+
+    auto offset { parser.bytes_read };
+    parser.init();
+    status = parser.parse_request(buffer.data(), buffer.size(), offset);
+    REQUIRE(status == Http::RequestParsingStatus::Finished);
+    REQUIRE(parser.bytes_read == 47);
+    REQUIRE(parser.result.uri.path == "/favicon.ico");
+
+    offset = parser.bytes_read;
+    parser.init();
+    status = parser.parse_request(buffer.data(), buffer.size(), offset);
+    REQUIRE(status == Http::RequestParsingStatus::NeedMoreData);
 }

@@ -1,7 +1,7 @@
-#include "parser.h"
+#include "req_parser.h"
 #include "utils/logging.h"
 #include <cstring>
-#include <cstring>
+#include <cassert>
 
 %%{
 
@@ -53,6 +53,8 @@ action get_field_name {
 }
 
 action done {
+  LOG_DEBUG("Parsing is done");
+  fbreak;
 }
 
 #### HTTP protocl grammar #####
@@ -131,7 +133,9 @@ namespace Http {
 
 void RequestParser::store_parsed(char const* start, char const* end, std::string& target){
   if (!start || !end){
-    throw std::runtime_error("invalid start/end pointers");
+    LOG_ERROR("invalid start/end pointers");
+    cs = http_parser_error;
+    return;
   }
   target = partial_buf + std::string(start, static_cast<size_t>(end - start));
   mark_active = false;
@@ -140,10 +144,14 @@ void RequestParser::store_parsed(char const* start, char const* end, std::string
 
 void RequestParser::store_parsed_header_value(char const* start, char const* end){
   if (!start || !end){
-    throw std::runtime_error("invalid start/end pointers");
+    LOG_ERROR("invalid start/end pointers");
+    cs = http_parser_error;
+    return;
   }
   if (cur_header_name == ""){
-    throw std::runtime_error("a header name must not be empty");
+    LOG_ERROR("a header name must not be empty");
+    cs = http_parser_error;
+    return;
   }
   auto value = partial_buf + std::string(start, static_cast<size_t>(end - start));
 
@@ -161,10 +169,14 @@ void RequestParser::store_parsed_header_value(char const* start, char const* end
 
 void RequestParser::store_parsed_header_name(char const* start, char const* end){
   if (!start || !end){
-    throw std::runtime_error("invalid start/end pointers");
+    LOG_ERROR("invalid start/end pointers");
+    cs = http_parser_error;
+    return;
   }
   if (cur_header_name != ""){
-    throw std::runtime_error("a header must be empty");
+    LOG_ERROR("a header must be empty");
+    cs = http_parser_error;
+    return;
   }
   cur_header_name = partial_buf + std::string(start, static_cast<size_t>(end - start));
   mark_active = false;
@@ -176,33 +188,40 @@ void RequestParser::init(){
   partial_buf = "";
   mark_active = false;
   result = Request{};
+  bytes_read = 0;
   %% write init;
 }
 
-RequestParsingStatus RequestParser::parse_request(char const* data, size_t len, char const* eof) {
-    const char* p {data}; 
+RequestParsingStatus RequestParser::parse_request(char const* data, size_t len, size_t offset) {
+    if (offset > len) {
+      LOG_ERROR("offset must be smaller than the buffer size");
+      return RequestParsingStatus::Error;
+    }
+
+    const char* p {data + offset}; 
     const char* pe {data + len}; 
 
     char const* mark {nullptr};
-    if (mark_active){
+    if (mark_active) {
       mark = p;
     }
 
     %% write exec;
 
     if (cs >= http_parser_first_final) {
+      bytes_read = static_cast<size_t>(p - data);
       return RequestParsingStatus::Finished;
     } else if (cs == http_parser_error) {
       return RequestParsingStatus::Error;
-    } else if (!eof) {
-      if (!mark){
-        throw std::runtime_error("mark can not be null");
+    } else {
+      if (!mark) {
+        LOG_ERROR("mark pointer is null");
+        return RequestParsingStatus::Error;
       }
       partial_buf = std::string(mark, static_cast<size_t>(pe - mark));
       mark_active = true;
-      return RequestParsingStatus::NeedContinue;
-    } else {
-      return RequestParsingStatus::Error;
-    }
-  }
+      return RequestParsingStatus::NeedMoreData;
+    }   
+}
+
 };

@@ -47,10 +47,10 @@ add_library(utils STATIC
   src/utils/net.cpp
   src/utils/helpers.cpp
   src/http/errors.cpp
-  src/http/parser.cpp
+  src/http/req_parser.cpp
+  src/http/req_reader.cpp
   src/http/http.cpp
   src/http/headers.cpp
-  src/http/request.cpp
   src/http/response.cpp
   src/http/mime.cpp
 )
@@ -86,6 +86,7 @@ add_executable(tests
   tests/utils/test_helpers.cpp
   tests/http/test_response.cpp
   tests/http/test_http_parser.cpp
+  tests/http/test_req_reader.cpp
   tests/http/test_headers.cpp
   tests/http/test_mime.cpp
   tests/http/test_urls.cpp

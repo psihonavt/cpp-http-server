@@ -4,6 +4,6 @@
 
 int main(int argc, char* argv[])
 {
-    setup_logging();
+    setup_logging(LogLevel::DEBUG);
     return Catch::Session().run(argc, argv);
 }

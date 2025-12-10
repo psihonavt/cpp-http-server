@@ -1,6 +1,8 @@
 #include "config/server.h"
 #include "CLI/CLI.hpp"
 #include "http/http.h"
+#include "http/req_reader.h"
+#include "http/request.h"
 #include "http/response.h"
 #include "utils/files.h"
 #include "utils/logging.h"
@@ -37,7 +39,7 @@ int s_singnal_pipe_wfd { -1 };
 int s_singnal_pipe_rfd { -1 };
 };
 
-Http::Response handle_http_request(HttpRequest const& req, std::filesystem::path const& server_root)
+Http::Response handle_http_request(Http::Request const& req, std::filesystem::path const& server_root)
 {
     if (req.method == "") {
         return Http::Response(Http::StatusCode::BAD_REQUEST);
@@ -113,14 +115,15 @@ public:
     Socket client;
     long long connection_id;
 
-    std::vector<Http::Response> responses_queue {};
-    std::optional<Http::ResponseWriter> cur_response_writer {};
-
-    std::vector<HttpRequest> requests_queue {};
-    std::optional<HttpRequestReader> request_reader {};
+    std::vector<Http::Response> responses_queue;
+    std::optional<Http::ResponseWriter> cur_response_writer;
+    Http::RequestReader request_reader;
 
     Connection(Socket& cl)
         : client { std::move(cl) }
+        , responses_queue {}
+        , cur_response_writer { std::nullopt }
+        , request_reader {}
     {
         connection_id = std::chrono::system_clock::now().time_since_epoch().count();
     }
@@ -160,28 +163,15 @@ public:
         return true;
     }
 
-    bool read_pending()
+    bool read_pending_requests()
     {
-        if (!request_reader) {
-            request_reader = make_request_reader(Config::Server::RECV_BUFFER_SIZE);
-        }
-        auto [status, maybe_request] = request_reader->read_request(client);
-        switch (status) {
-        case HttpRequestReadWriteStatus::ConnectionClosed:
-            LOG_INFO("[{}] socket {} conenction closed (or reset) by peer.", connection_id, client.fd());
-            return false;
-        case HttpRequestReadWriteStatus::NeedContinue:
-            return true;
-        case HttpRequestReadWriteStatus::Finished:
-            assert(maybe_request);
-            requests_queue.push_back(std::move(*maybe_request));
-            return true;
-        case HttpRequestReadWriteStatus::Error:
-            LOG_ERROR("[{}] socket {} error recv: {}", connection_id, client.fd(), strerror(errno));
-            return false;
-        default:
-            assert(false);
-        }
+        auto [error_reading, error_parsing] { request_reader.read_requests(client) };
+        return !(error_reading || error_parsing);
+    }
+
+    void clear_pending_requests()
+    {
+        request_reader.erase_requests();
     }
 };
 
@@ -274,7 +264,7 @@ std::optional<PfdsChange> establish_connection(ServerContext& ctx)
 
     int client_fd { client_socket.fd() };
     ctx.connections.emplace(client_fd, client_socket);
-    LOG_INFO("[{}] socket {}: connection established", ctx.connections.at(client_fd).connection_id, client_fd);
+    LOG_INFO("[{}][s:{}] connection established", ctx.connections.at(client_fd).connection_id, client_fd);
     return PfdsChange { .fd = client_fd, .action = PfdsChangeAction::Add, .events = (POLLHUP | POLLIN) };
 }
 
@@ -286,20 +276,23 @@ std::optional<PfdsChange> handle_recv_events(ServerContext& ctx, int sender_fd)
     }
     auto& connection { ctx.connections.at(sender_fd) };
 
-    if (connection.read_pending()) {
-        if (!connection.requests_queue.empty()) {
-            HttpRequest& request = connection.requests_queue.back();
-            LOG_INFO("[{}] socket {} received a HTTP request: {}", connection.connection_id, sender_fd, request.uri.path);
-            auto response = handle_http_request(request, ctx.server_root);
-            connection.responses_queue.push_back(std::move(response));
-            connection.requests_queue.pop_back();
-            return PfdsChange { .fd = sender_fd, .action = PfdsChangeAction::AddEvents, .events = POLLOUT };
-        } else {
-            return {};
-        }
-    } else {
+    if (!connection.read_pending_requests()) {
         ctx.connections.erase(sender_fd);
         return PfdsChange { .fd = sender_fd, .action = PfdsChangeAction::Remove };
+    } else {
+        LOG_INFO("[{}][s:{}] read {} requests", connection.connection_id, sender_fd, connection.request_reader.requests().size());
+        for (auto& request : connection.request_reader.requests()) {
+            LOG_INFO("[{}][s:{}] received a HTTP request: {}", connection.connection_id, sender_fd, request.uri.path);
+            auto response = handle_http_request(request, ctx.server_root);
+            connection.responses_queue.push_back(std::move(response));
+        }
+        connection.clear_pending_requests();
+
+        if (connection.responses_queue.empty()) {
+            return {};
+        } else {
+            return PfdsChange { .fd = sender_fd, .action = PfdsChangeAction::AddEvents, .events = POLLOUT };
+        }
     }
 }
 
