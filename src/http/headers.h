@@ -27,6 +27,11 @@ struct Headers {
     {
         return headers;
     }
+
+    size_t size() const
+    {
+        return headers.size();
+    }
 };
 
 Headers get_default_headers(int content_length, std::string const& content_type);

@@ -1,6 +1,6 @@
-#include "http/req_reader.h"
+#include "req_reader.h"
 #include "config.h"
-#include "http/req_parser.h"
+#include "req_parser.h"
 #include "utils/logging.h"
 #include "utils/net.h"
 #include <cerrno>
@@ -18,7 +18,7 @@ read_requests_result RequestReader::read_requests(Socket const& client)
     char buffer[PARSER_MAX_READ_BUF_LEN];
 
     while (true) {
-        auto n = recv(client.fd(), buffer, PARSER_MAX_PARTIAL_BUF_LEN, 0);
+        auto n = recv(client.fd(), buffer, PARSER_MAX_READ_BUF_LEN, 0);
         if (n == 0) {
             LOG_DEBUG("[s:{}] closed connection", client.fd());
             error_reading = true;

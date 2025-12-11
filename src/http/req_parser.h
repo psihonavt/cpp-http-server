@@ -39,9 +39,9 @@ struct RequestParser {
     size_t bytes_read;
 
     Request result;
-    void store_parsed(char const* start, char const* end, std::string& target);
-    void store_parsed_header_value(char const* start, char const* end);
-    void store_parsed_header_name(char const* start, char const* end);
+    bool store_parsed(char const* start, char const* end, std::string& target);
+    bool store_parsed_header_value(char const* start, char const* end);
+    bool store_parsed_header_name(char const* start, char const* end);
     void init();
     RequestParsingStatus parse_request(char const* data, size_t len, size_t offset);
 };

@@ -3,6 +3,7 @@
 #include "http/headers.h"
 #include "http/req_parser.h"
 #include "utils/helpers.h"
+#include <format>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -159,6 +160,7 @@ TEST_CASE("Request parsing bad requests", "[http_parser]")
 {
     Http::RequestParser parser {};
     parser.init();
+
     SECTION("bad HTTP version")
     {
         std::string recv_buf1 { "GET /hel" };
@@ -175,6 +177,19 @@ TEST_CASE("Request parsing bad requests", "[http_parser]")
         auto status { parser.parse_request(recv_buf.data(), recv_buf.size(), 0) };
         REQUIRE(status == Http::RequestParsingStatus::Error);
     }
+
+    SECTION("partial_buf overflow results in error")
+    {
+        std::string buf1 { "GET /" };
+        auto buf2 = std::string(Http::PARSER_MAX_PARTIAL_BUF_LEN, 'a');
+        std::string buf3 { " HTTP/1.1\r\n\r\n" };
+
+        auto status { parser.parse_request(buf1.data(), buf1.size(), 0) };
+        REQUIRE(status == Http::RequestParsingStatus::NeedMoreData);
+
+        status = parser.parse_request(buf2.data(), buf2.size(), 0);
+        REQUIRE(status == Http::RequestParsingStatus::Error);
+    }
 }
 
 Http::Headers make_headers(std::vector<std::pair<std::string, std::string>> headers)
@@ -188,29 +203,52 @@ Http::Headers make_headers(std::vector<std::pair<std::string, std::string>> head
 
 TEST_CASE("Headers parsing", "[http_parser]")
 {
-    std::vector<std::tuple<std::string, std::string, Http::Headers>> data {
+    std::string bad_request { "GET / HTTP/1.1\r\nx-weird: part" };
+    bad_request += '\x05';
+    bad_request += "end\r\n\r\n";
+    std::vector<std::tuple<std::string, std::string, Http::Headers, Http::RequestParsingStatus>> data {
         { "standard headers",
             "GET / HTTP/1.1\r\nHost: example.com\r\nContent-Type:      text/plain\r\n\r\n",
-            make_headers({ { "Host", "example.com" }, { "Content-Type", "text/plain" } }) },
+            make_headers({ { "Host", "example.com" }, { "Content-Type", "text/plain" } }),
+            Http::RequestParsingStatus::Finished },
         { "empty header value",
             "GET / HTTP/1.1\r\nHost: \r\nContent-Type: text/plain  \r\n\r\n",
-            make_headers({ { "Host", "" }, { "Content-Type", "text/plain" } }) },
+            make_headers({ { "Host", "" }, { "Content-Type", "text/plain" } }),
+            Http::RequestParsingStatus::Finished },
         { "multiple header values",
-            "GET / HTTP/1.1\r\nx-weird: a\r\nx-weird: b    \r\n\r\n",
-            make_headers({ { "X-Weird", "a" }, { "X-Weird", "b" } }) }
+            "GET / HTTP/1.1\r\nx-weird: a space c\r\nx-weird: b    \r\n\r\n",
+            make_headers({ { "X-Weird", "a space c" }, { "X-Weird", "b" } }),
+            Http::RequestParsingStatus::Finished },
+        { "control chars in a headers",
+            bad_request,
+            make_headers({}),
+            Http::RequestParsingStatus::Error }
     };
 
     Http::RequestParser parser {};
     parser.init();
 
-    for (auto& [name, request, headers] : data) {
+    for (auto& [name, request, headers, expected_status] : data) {
         SECTION(name)
         {
             auto status { parser.parse_request(request.data(), request.size(), 0) };
-            REQUIRE(status == Http::RequestParsingStatus::Finished);
+            REQUIRE(status == expected_status);
             REQUIRE(parser.result.headers == headers);
         }
     }
+}
+
+TEST_CASE("Too many headers", "[http_parser][too_many_headers]")
+{
+    std::string request { "GET / HTTP/1.1\r\n" };
+    for (int i { 0 }; i < 102; i++) {
+        request.append(std::format("X{}: v{}\r\n", i, i));
+    }
+    request.append("\r\n");
+    Http::RequestParser parser {};
+    parser.init();
+    auto status { parser.parse_request(request.data(), request.size(), 0) };
+    REQUIRE(status == Http::RequestParsingStatus::Error);
 }
 
 TEST_CASE("Chunked headers parsing", "[http_parser]")
@@ -258,20 +296,4 @@ TEST_CASE("Multiple requests in a buffer", "[http_parser]")
     parser.init();
     status = parser.parse_request(buffer.data(), buffer.size(), offset);
     REQUIRE(status == Http::RequestParsingStatus::NeedMoreData);
-}
-
-TEST_CASE("partial_buf overflow results in error", "[http_parser]")
-{
-    Http::RequestParser parser {};
-    parser.init();
-
-    std::string buf1 { "GET /" };
-    auto buf2 = std::string(Http::PARSER_MAX_PARTIAL_BUF_LEN, 'a');
-    std::string buf3 { " HTTP/1.1\r\n\r\n" };
-
-    auto status { parser.parse_request(buf1.data(), buf1.size(), 0) };
-    REQUIRE(status == Http::RequestParsingStatus::NeedMoreData);
-
-    status = parser.parse_request(buf2.data(), buf2.size(), 0);
-    REQUIRE(status == Http::RequestParsingStatus::Error);
 }

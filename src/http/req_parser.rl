@@ -15,53 +15,59 @@ action mark {
 }
 
 action get_http_version {
-  store_parsed(mark, fpc, result.proto);
-  mark = nullptr;
+  if (store_parsed(mark, fpc, result.proto)) mark = nullptr;
+  else fgoto *http_parser_error;
 }
 
 action get_http_method {
-  store_parsed(mark, fpc, result.method);
-  mark = nullptr;
+  if (store_parsed(mark, fpc, result.method)) mark = nullptr;
+  else fgoto *http_parser_error;
 }
 
 action get_hostname {
-  store_parsed(mark, fpc, result.uri.hostname);
-  mark = nullptr;
+  if (store_parsed(mark, fpc, result.uri.hostname)) mark = nullptr;
+  else fgoto *http_parser_error;
 }
 
 action get_query {
-  store_parsed(mark, fpc, result.uri.query);
-  mark = nullptr;
+  if (store_parsed(mark, fpc, result.uri.query)) mark = nullptr;
+  else fgoto *http_parser_error;
 }
 
 action get_fragment {
-  store_parsed(mark, fpc, result.uri.fragment);
-  mark = nullptr;
+  if (store_parsed(mark, fpc, result.uri.fragment)) mark = nullptr;
+  else fgoto *http_parser_error;
 }
 
 action get_path {
-  store_parsed(mark, fpc, result.uri.path);
-  mark = nullptr;
+  if (store_parsed(mark, fpc, result.uri.path)) mark = nullptr;
+  else fgoto *http_parser_error;
 }
 
 action get_scheme {
-  store_parsed(mark, fpc, result.uri.scheme);
-  mark = nullptr;
+  if (store_parsed(mark, fpc, result.uri.scheme)) mark = nullptr;
+  else fgoto *http_parser_error;
 }
 
 action get_port {
-  store_parsed(mark, fpc, result.uri.port);
-  mark = nullptr;
+  if (store_parsed(mark, fpc, result.uri.port)) mark = nullptr;
+  else fgoto *http_parser_error;
 }
 
 action get_field_value {
-  store_parsed_header_value(mark, fpc);
-  mark = nullptr;
+  if (store_parsed_header_value(mark, fpc)) {
+    mark = nullptr;
+  } else {
+    fgoto *http_parser_error;
+  };
 }
 
 action get_field_name {
-  store_parsed_header_name(mark, fpc);
-  mark = nullptr;
+  if (store_parsed_header_name(mark, fpc)) {
+    mark = nullptr;
+  } else {
+    fgoto *http_parser_error;
+  };
 }
 
 action done {
@@ -129,7 +135,7 @@ http_version = "HTTP/" http_version_number >mark %get_http_version;
 
 request_line = http_method ascii_space request_uri ascii_space http_version CRLF;
 
-field_value = any* >mark %get_field_value;
+field_value = (text | ascii_space | "\t")* >mark %get_field_value;
 field_name = (token -- ":")+ >mark %get_field_name;
 message_header = field_name ":" field_value :> CRLF;
 
@@ -143,27 +149,26 @@ write data;
 
 namespace Http {
 
-void RequestParser::store_parsed(char const* start, char const* end, std::string& target){
+bool RequestParser::store_parsed(char const* start, char const* end, std::string& target){
   if (!start || !end){
     LOG_ERROR("invalid start/end pointers");
     cs = http_parser_error;
-    return;
+    return false;
   }
   target = partial_buf + std::string(start, static_cast<size_t>(end - start));
   mark_active = false;
   partial_buf = "";
+  return true;
 }
 
-void RequestParser::store_parsed_header_value(char const* start, char const* end){
+bool RequestParser::store_parsed_header_value(char const* start, char const* end){
   if (!start || !end){
     LOG_ERROR("invalid start/end pointers");
-    cs = http_parser_error;
-    return;
+    return false;
   }
-  if (cur_header_name == ""){
+  if (cur_header_name.empty()){
     LOG_ERROR("a header name must not be empty");
-    cs = http_parser_error;
-    return;
+    return false;
   }
   auto value = partial_buf + std::string(start, static_cast<size_t>(end - start));
 
@@ -172,22 +177,28 @@ void RequestParser::store_parsed_header_value(char const* start, char const* end
   mark_active = false;
   partial_buf = "";
   cur_header_name = "";
+  return true;
 }
 
-void RequestParser::store_parsed_header_name(char const* start, char const* end){
+bool RequestParser::store_parsed_header_name(char const* start, char const* end){
   if (!start || !end){
     LOG_ERROR("invalid start/end pointers");
-    cs = http_parser_error;
-    return;
+    return false;
   }
-  if (cur_header_name != ""){
+
+  if (!cur_header_name.empty()){
     LOG_ERROR("a header must be empty");
-    cs = http_parser_error;
-    return;
+    return false;
+  }
+
+  if (result.headers.size() == MAX_HEADERS){
+    LOG_ERROR("Too many headers");
+    return false;
   }
   cur_header_name = partial_buf + std::string(start, static_cast<size_t>(end - start));
   mark_active = false;
   partial_buf = "";
+  return true;
 }
 
 void RequestParser::init(){
@@ -222,11 +233,11 @@ RequestParsingStatus RequestParser::parse_request(char const* data, size_t len, 
       return RequestParsingStatus::Error;
     } else {
       if (mark) {
-        partial_buf = partial_buf + std::string(mark, static_cast<size_t>(pe - mark));
-        if (partial_buf.size() > PARSER_MAX_PARTIAL_BUF_LEN) {
+        if (partial_buf.size() + (pe - mark) > PARSER_MAX_PARTIAL_BUF_LEN) {
           LOG_WARN("partial_buf is getting too large, aborting");
           return RequestParsingStatus::Error;
         }
+        partial_buf = partial_buf.append(std::string(mark, static_cast<size_t>(pe - mark)));
         mark_active = true;
       }
       return RequestParsingStatus::NeedMoreData;
