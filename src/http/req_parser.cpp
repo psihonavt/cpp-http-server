@@ -1,12 +1,14 @@
 
 #line 1 "src/http/req_parser.rl"
 #include "req_parser.h"
+#include "config.h"
 #include "utils/logging.h"
+#include "utils/helpers.h"
 #include <cstring>
 #include <cassert>
 
 
-#line 10 "src/http/req_parser.cpp"
+#line 12 "src/http/req_parser.cpp"
 static const int http_parser_start = 1;
 static const int http_parser_first_final = 80;
 static const int http_parser_error = 0;
@@ -14,7 +16,7 @@ static const int http_parser_error = 0;
 static const int http_parser_en_main = 1;
 
 
-#line 130 "src/http/req_parser.rl"
+#line 142 "src/http/req_parser.rl"
 
 
 namespace Http {
@@ -43,12 +45,7 @@ void RequestParser::store_parsed_header_value(char const* start, char const* end
   }
   auto value = partial_buf + std::string(start, static_cast<size_t>(end - start));
 
-  size_t ws_pos {value.find_last_not_of(" \t")};
-  if (ws_pos != std::string::npos){
-    value.erase(ws_pos + 1);
-  }
-
-  result.headers.set(cur_header_name, value);
+  result.headers.set(cur_header_name, str_trim(value));
 
   mark_active = false;
   partial_buf = "";
@@ -78,12 +75,12 @@ void RequestParser::init(){
   result = Request{};
   bytes_read = 0;
   
-#line 82 "src/http/req_parser.cpp"
+#line 79 "src/http/req_parser.cpp"
 	{
 	 this->cs = http_parser_start;
 	}
 
-#line 193 "src/http/req_parser.rl"
+#line 200 "src/http/req_parser.rl"
 }
 
 RequestParsingStatus RequestParser::parse_request(char const* data, size_t len, size_t offset) {
@@ -101,7 +98,7 @@ RequestParsingStatus RequestParser::parse_request(char const* data, size_t len, 
     }
 
     
-#line 105 "src/http/req_parser.cpp"
+#line 102 "src/http/req_parser.cpp"
 	{
 	if ( p == pe )
 		goto _test_eof;
@@ -120,7 +117,7 @@ st0:
  this->cs = 0;
 	goto _out;
 tr0:
-#line 11 "src/http/req_parser.rl"
+#line 13 "src/http/req_parser.rl"
 	{
   mark = p;
 }
@@ -129,7 +126,7 @@ st2:
 	if ( ++p == pe )
 		goto _test_eof2;
 case 2:
-#line 133 "src/http/req_parser.cpp"
+#line 130 "src/http/req_parser.cpp"
 	if ( (*p) == 69 )
 		goto st3;
 	goto st0;
@@ -169,16 +166,17 @@ case 7:
 		goto tr11;
 	goto st0;
 tr11:
-#line 19 "src/http/req_parser.rl"
+#line 22 "src/http/req_parser.rl"
 	{
   store_parsed(mark, p, result.method);
+  mark = nullptr;
 }
 	goto st8;
 st8:
 	if ( ++p == pe )
 		goto _test_eof8;
 case 8:
-#line 182 "src/http/req_parser.cpp"
+#line 180 "src/http/req_parser.cpp"
 	switch( (*p) ) {
 		case 33: goto tr12;
 		case 37: goto tr13;
@@ -199,7 +197,7 @@ case 8:
 		goto tr15;
 	goto st0;
 tr12:
-#line 11 "src/http/req_parser.rl"
+#line 13 "src/http/req_parser.rl"
 	{
   mark = p;
 }
@@ -208,7 +206,7 @@ st9:
 	if ( ++p == pe )
 		goto _test_eof9;
 case 9:
-#line 212 "src/http/req_parser.cpp"
+#line 210 "src/http/req_parser.cpp"
 	switch( (*p) ) {
 		case 32: goto tr16;
 		case 33: goto st9;
@@ -231,82 +229,93 @@ case 9:
 		goto st9;
 	goto st0;
 tr16:
-#line 35 "src/http/req_parser.rl"
+#line 42 "src/http/req_parser.rl"
 	{
   store_parsed(mark, p, result.uri.path);
+  mark = nullptr;
 }
 	goto st10;
-tr43:
-#line 11 "src/http/req_parser.rl"
+tr42:
+#line 13 "src/http/req_parser.rl"
 	{
   mark = p;
 }
-#line 31 "src/http/req_parser.rl"
+#line 37 "src/http/req_parser.rl"
 	{
   store_parsed(mark, p, result.uri.fragment);
+  mark = nullptr;
 }
 	goto st10;
-tr46:
-#line 31 "src/http/req_parser.rl"
+tr45:
+#line 37 "src/http/req_parser.rl"
 	{
   store_parsed(mark, p, result.uri.fragment);
+  mark = nullptr;
 }
 	goto st10;
-tr53:
-#line 11 "src/http/req_parser.rl"
+tr52:
+#line 13 "src/http/req_parser.rl"
+	{
+  mark = p;
+}
+#line 32 "src/http/req_parser.rl"
+	{
+  store_parsed(mark, p, result.uri.query);
+  mark = nullptr;
+}
+	goto st10;
+tr56:
+#line 32 "src/http/req_parser.rl"
+	{
+  store_parsed(mark, p, result.uri.query);
+  mark = nullptr;
+}
+	goto st10;
+tr62:
+#line 13 "src/http/req_parser.rl"
 	{
   mark = p;
 }
 #line 27 "src/http/req_parser.rl"
 	{
-  store_parsed(mark, p, result.uri.query);
+  store_parsed(mark, p, result.uri.hostname);
+  mark = nullptr;
+}
+#line 42 "src/http/req_parser.rl"
+	{
+  store_parsed(mark, p, result.uri.path);
+  mark = nullptr;
 }
 	goto st10;
-tr57:
+tr70:
 #line 27 "src/http/req_parser.rl"
 	{
-  store_parsed(mark, p, result.uri.query);
-}
-	goto st10;
-tr63:
-#line 11 "src/http/req_parser.rl"
-	{
-  mark = p;
-}
-#line 23 "src/http/req_parser.rl"
-	{
   store_parsed(mark, p, result.uri.hostname);
+  mark = nullptr;
 }
-#line 35 "src/http/req_parser.rl"
+#line 42 "src/http/req_parser.rl"
 	{
   store_parsed(mark, p, result.uri.path);
+  mark = nullptr;
 }
 	goto st10;
-tr71:
-#line 23 "src/http/req_parser.rl"
-	{
-  store_parsed(mark, p, result.uri.hostname);
-}
-#line 35 "src/http/req_parser.rl"
-	{
-  store_parsed(mark, p, result.uri.path);
-}
-	goto st10;
-tr92:
-#line 43 "src/http/req_parser.rl"
+tr91:
+#line 52 "src/http/req_parser.rl"
 	{
   store_parsed(mark, p, result.uri.port);
+  mark = nullptr;
 }
-#line 35 "src/http/req_parser.rl"
+#line 42 "src/http/req_parser.rl"
 	{
   store_parsed(mark, p, result.uri.path);
+  mark = nullptr;
 }
 	goto st10;
 st10:
 	if ( ++p == pe )
 		goto _test_eof10;
 case 10:
-#line 310 "src/http/req_parser.cpp"
+#line 319 "src/http/req_parser.cpp"
 	if ( (*p) == 72 )
 		goto st11;
 	goto st0;
@@ -346,7 +355,7 @@ case 15:
 		goto tr27;
 	goto st0;
 tr27:
-#line 11 "src/http/req_parser.rl"
+#line 13 "src/http/req_parser.rl"
 	{
   mark = p;
 }
@@ -355,7 +364,7 @@ st16:
 	if ( ++p == pe )
 		goto _test_eof16;
 case 16:
-#line 359 "src/http/req_parser.cpp"
+#line 368 "src/http/req_parser.cpp"
 	if ( (*p) == 46 )
 		goto st17;
 	if ( 48 <= (*p) && (*p) <= 57 )
@@ -378,32 +387,35 @@ case 18:
 		goto st18;
 	goto st0;
 tr31:
-#line 15 "src/http/req_parser.rl"
+#line 17 "src/http/req_parser.rl"
 	{
   store_parsed(mark, p, result.proto);
+  mark = nullptr;
 }
 	goto st19;
-tr40:
-#line 11 "src/http/req_parser.rl"
+tr39:
+#line 13 "src/http/req_parser.rl"
 	{
   mark = p;
 }
-#line 47 "src/http/req_parser.rl"
+#line 57 "src/http/req_parser.rl"
 	{
   store_parsed_header_value(mark, p);
+  mark = nullptr;
 }
 	goto st19;
-tr42:
-#line 47 "src/http/req_parser.rl"
+tr41:
+#line 57 "src/http/req_parser.rl"
 	{
   store_parsed_header_value(mark, p);
+  mark = nullptr;
 }
 	goto st19;
 st19:
 	if ( ++p == pe )
 		goto _test_eof19;
 case 19:
-#line 407 "src/http/req_parser.cpp"
+#line 419 "src/http/req_parser.cpp"
 	if ( (*p) == 10 )
 		goto st20;
 	goto st0;
@@ -443,7 +455,7 @@ case 21:
 		goto tr35;
 	goto st0;
 tr35:
-#line 55 "src/http/req_parser.rl"
+#line 67 "src/http/req_parser.rl"
 	{
   LOG_DEBUG("Parsing is done");
   {p++;  this->cs = 80; goto _out;}
@@ -453,10 +465,10 @@ st80:
 	if ( ++p == pe )
 		goto _test_eof80;
 case 80:
-#line 457 "src/http/req_parser.cpp"
+#line 469 "src/http/req_parser.cpp"
 	goto st0;
 tr34:
-#line 11 "src/http/req_parser.rl"
+#line 13 "src/http/req_parser.rl"
 	{
   mark = p;
 }
@@ -465,7 +477,7 @@ st22:
 	if ( ++p == pe )
 		goto _test_eof22;
 case 22:
-#line 469 "src/http/req_parser.cpp"
+#line 481 "src/http/req_parser.cpp"
 	switch( (*p) ) {
 		case 33: goto st22;
 		case 58: goto tr37;
@@ -490,31 +502,23 @@ case 22:
 	} else
 		goto st22;
 	goto st0;
-tr39:
-#line 11 "src/http/req_parser.rl"
-	{
-  mark = p;
-}
-	goto st23;
 tr37:
-#line 51 "src/http/req_parser.rl"
+#line 62 "src/http/req_parser.rl"
 	{
   store_parsed_header_name(mark, p);
+  mark = nullptr;
 }
 	goto st23;
 st23:
 	if ( ++p == pe )
 		goto _test_eof23;
 case 23:
-#line 510 "src/http/req_parser.cpp"
-	switch( (*p) ) {
-		case 9: goto tr39;
-		case 13: goto tr40;
-		case 32: goto tr39;
-	}
+#line 517 "src/http/req_parser.cpp"
+	if ( (*p) == 13 )
+		goto tr39;
 	goto tr38;
 tr38:
-#line 11 "src/http/req_parser.rl"
+#line 13 "src/http/req_parser.rl"
 	{
   mark = p;
 }
@@ -523,90 +527,99 @@ st24:
 	if ( ++p == pe )
 		goto _test_eof24;
 case 24:
-#line 527 "src/http/req_parser.cpp"
+#line 531 "src/http/req_parser.cpp"
 	if ( (*p) == 13 )
-		goto tr42;
+		goto tr41;
 	goto st24;
 tr18:
-#line 35 "src/http/req_parser.rl"
+#line 42 "src/http/req_parser.rl"
 	{
   store_parsed(mark, p, result.uri.path);
+  mark = nullptr;
 }
 	goto st25;
-tr55:
-#line 11 "src/http/req_parser.rl"
+tr54:
+#line 13 "src/http/req_parser.rl"
+	{
+  mark = p;
+}
+#line 32 "src/http/req_parser.rl"
+	{
+  store_parsed(mark, p, result.uri.query);
+  mark = nullptr;
+}
+	goto st25;
+tr58:
+#line 32 "src/http/req_parser.rl"
+	{
+  store_parsed(mark, p, result.uri.query);
+  mark = nullptr;
+}
+	goto st25;
+tr64:
+#line 13 "src/http/req_parser.rl"
 	{
   mark = p;
 }
 #line 27 "src/http/req_parser.rl"
 	{
-  store_parsed(mark, p, result.uri.query);
+  store_parsed(mark, p, result.uri.hostname);
+  mark = nullptr;
+}
+#line 42 "src/http/req_parser.rl"
+	{
+  store_parsed(mark, p, result.uri.path);
+  mark = nullptr;
 }
 	goto st25;
-tr59:
+tr72:
 #line 27 "src/http/req_parser.rl"
 	{
-  store_parsed(mark, p, result.uri.query);
-}
-	goto st25;
-tr65:
-#line 11 "src/http/req_parser.rl"
-	{
-  mark = p;
-}
-#line 23 "src/http/req_parser.rl"
-	{
   store_parsed(mark, p, result.uri.hostname);
+  mark = nullptr;
 }
-#line 35 "src/http/req_parser.rl"
+#line 42 "src/http/req_parser.rl"
 	{
   store_parsed(mark, p, result.uri.path);
+  mark = nullptr;
 }
 	goto st25;
-tr73:
-#line 23 "src/http/req_parser.rl"
-	{
-  store_parsed(mark, p, result.uri.hostname);
-}
-#line 35 "src/http/req_parser.rl"
-	{
-  store_parsed(mark, p, result.uri.path);
-}
-	goto st25;
-tr93:
-#line 43 "src/http/req_parser.rl"
+tr92:
+#line 52 "src/http/req_parser.rl"
 	{
   store_parsed(mark, p, result.uri.port);
+  mark = nullptr;
 }
-#line 35 "src/http/req_parser.rl"
+#line 42 "src/http/req_parser.rl"
 	{
   store_parsed(mark, p, result.uri.path);
+  mark = nullptr;
 }
 	goto st25;
 st25:
 	if ( ++p == pe )
 		goto _test_eof25;
 case 25:
-#line 591 "src/http/req_parser.cpp"
+#line 604 "src/http/req_parser.cpp"
 	switch( (*p) ) {
-		case 32: goto tr43;
-		case 33: goto tr44;
-		case 37: goto tr45;
-		case 61: goto tr44;
-		case 95: goto tr44;
-		case 126: goto tr44;
+		case 32: goto tr42;
+		case 33: goto tr43;
+		case 37: goto tr44;
+		case 61: goto tr43;
+		case 95: goto tr43;
+		case 126: goto tr43;
 	}
 	if ( (*p) < 63 ) {
 		if ( 36 <= (*p) && (*p) <= 59 )
-			goto tr44;
+			goto tr43;
 	} else if ( (*p) > 90 ) {
 		if ( 97 <= (*p) && (*p) <= 122 )
-			goto tr44;
+			goto tr43;
 	} else
-		goto tr44;
+		goto tr43;
 	goto st0;
-tr44:
-#line 11 "src/http/req_parser.rl"
+tr43:
+#line 13 "src/http/req_parser.rl"
 	{
   mark = p;
 }
@@ -615,9 +628,9 @@ st26:
 	if ( ++p == pe )
 		goto _test_eof26;
 case 26:
-#line 619 "src/http/req_parser.cpp"
+#line 632 "src/http/req_parser.cpp"
 	switch( (*p) ) {
-		case 32: goto tr46;
+		case 32: goto tr45;
 		case 33: goto st26;
 		case 37: goto st27;
 		case 61: goto st26;
@@ -633,8 +646,8 @@ case 26:
 	} else
 		goto st26;
 	goto st0;
-tr45:
-#line 11 "src/http/req_parser.rl"
+tr44:
+#line 13 "src/http/req_parser.rl"
 	{
   mark = p;
 }
@@ -643,7 +656,7 @@ st27:
 	if ( ++p == pe )
 		goto _test_eof27;
 case 27:
-#line 647 "src/http/req_parser.cpp"
+#line 660 "src/http/req_parser.cpp"
 	if ( (*p) < 65 ) {
 		if ( 48 <= (*p) && (*p) <= 57 )
 			goto st28;
@@ -667,7 +680,7 @@ case 28:
 		goto st26;
 	goto st0;
 tr13:
-#line 11 "src/http/req_parser.rl"
+#line 13 "src/http/req_parser.rl"
 	{
   mark = p;
 }
@@ -676,7 +689,7 @@ st29:
 	if ( ++p == pe )
 		goto _test_eof29;
 case 29:
-#line 680 "src/http/req_parser.cpp"
+#line 693 "src/http/req_parser.cpp"
 	if ( (*p) < 65 ) {
 		if ( 48 <= (*p) && (*p) <= 57 )
 			goto st30;
@@ -699,32 +712,35 @@ case 30:
 	} else
 		goto st9;
 	goto st0;
-tr67:
-#line 11 "src/http/req_parser.rl"
+tr66:
+#line 13 "src/http/req_parser.rl"
 	{
   mark = p;
 }
-#line 23 "src/http/req_parser.rl"
+#line 27 "src/http/req_parser.rl"
 	{
   store_parsed(mark, p, result.uri.hostname);
+  mark = nullptr;
 }
 	goto st31;
-tr75:
-#line 23 "src/http/req_parser.rl"
+tr74:
+#line 27 "src/http/req_parser.rl"
 	{
   store_parsed(mark, p, result.uri.hostname);
+  mark = nullptr;
 }
-#line 11 "src/http/req_parser.rl"
+#line 13 "src/http/req_parser.rl"
 	{
   mark = p;
 }
 	goto st31;
-tr94:
-#line 43 "src/http/req_parser.rl"
+tr93:
+#line 52 "src/http/req_parser.rl"
 	{
   store_parsed(mark, p, result.uri.port);
+  mark = nullptr;
 }
-#line 11 "src/http/req_parser.rl"
+#line 13 "src/http/req_parser.rl"
 	{
   mark = p;
 }
@@ -733,7 +749,7 @@ st31:
 	if ( ++p == pe )
 		goto _test_eof31;
 case 31:
-#line 737 "src/http/req_parser.cpp"
+#line 753 "src/http/req_parser.cpp"
 	switch( (*p) ) {
 		case 32: goto tr16;
 		case 33: goto st31;
@@ -780,70 +796,77 @@ case 33:
 		goto st31;
 	goto st0;
 tr21:
-#line 35 "src/http/req_parser.rl"
+#line 42 "src/http/req_parser.rl"
 	{
   store_parsed(mark, p, result.uri.path);
+  mark = nullptr;
 }
 	goto st34;
-tr69:
-#line 11 "src/http/req_parser.rl"
+tr68:
+#line 13 "src/http/req_parser.rl"
 	{
   mark = p;
 }
-#line 23 "src/http/req_parser.rl"
+#line 27 "src/http/req_parser.rl"
 	{
   store_parsed(mark, p, result.uri.hostname);
+  mark = nullptr;
 }
-#line 35 "src/http/req_parser.rl"
+#line 42 "src/http/req_parser.rl"
 	{
   store_parsed(mark, p, result.uri.path);
+  mark = nullptr;
 }
 	goto st34;
-tr77:
-#line 23 "src/http/req_parser.rl"
+tr76:
+#line 27 "src/http/req_parser.rl"
 	{
   store_parsed(mark, p, result.uri.hostname);
+  mark = nullptr;
 }
-#line 35 "src/http/req_parser.rl"
+#line 42 "src/http/req_parser.rl"
 	{
   store_parsed(mark, p, result.uri.path);
+  mark = nullptr;
 }
 	goto st34;
-tr96:
-#line 43 "src/http/req_parser.rl"
+tr95:
+#line 52 "src/http/req_parser.rl"
 	{
   store_parsed(mark, p, result.uri.port);
+  mark = nullptr;
 }
-#line 35 "src/http/req_parser.rl"
+#line 42 "src/http/req_parser.rl"
 	{
   store_parsed(mark, p, result.uri.path);
+  mark = nullptr;
 }
 	goto st34;
 st34:
 	if ( ++p == pe )
 		goto _test_eof34;
 case 34:
-#line 827 "src/http/req_parser.cpp"
+#line 850 "src/http/req_parser.cpp"
 	switch( (*p) ) {
-		case 32: goto tr53;
-		case 33: goto tr54;
-		case 35: goto tr55;
-		case 37: goto tr56;
-		case 61: goto tr54;
-		case 95: goto tr54;
-		case 126: goto tr54;
+		case 32: goto tr52;
+		case 33: goto tr53;
+		case 35: goto tr54;
+		case 37: goto tr55;
+		case 61: goto tr53;
+		case 95: goto tr53;
+		case 126: goto tr53;
 	}
 	if ( (*p) < 63 ) {
 		if ( 36 <= (*p) && (*p) <= 59 )
-			goto tr54;
+			goto tr53;
 	} else if ( (*p) > 90 ) {
 		if ( 97 <= (*p) && (*p) <= 122 )
-			goto tr54;
+			goto tr53;
 	} else
-		goto tr54;
+		goto tr53;
 	goto st0;
-tr54:
-#line 11 "src/http/req_parser.rl"
+tr53:
+#line 13 "src/http/req_parser.rl"
 	{
   mark = p;
 }
@@ -852,11 +875,11 @@ st35:
 	if ( ++p == pe )
 		goto _test_eof35;
 case 35:
-#line 856 "src/http/req_parser.cpp"
+#line 879 "src/http/req_parser.cpp"
 	switch( (*p) ) {
-		case 32: goto tr57;
+		case 32: goto tr56;
 		case 33: goto st35;
-		case 35: goto tr59;
+		case 35: goto tr58;
 		case 37: goto st36;
 		case 61: goto st35;
 		case 95: goto st35;
@@ -871,8 +894,8 @@ case 35:
 	} else
 		goto st35;
 	goto st0;
-tr56:
-#line 11 "src/http/req_parser.rl"
+tr55:
+#line 13 "src/http/req_parser.rl"
 	{
   mark = p;
 }
@@ -881,7 +904,7 @@ st36:
 	if ( ++p == pe )
 		goto _test_eof36;
 case 36:
-#line 885 "src/http/req_parser.cpp"
+#line 908 "src/http/req_parser.cpp"
 	if ( (*p) < 65 ) {
 		if ( 48 <= (*p) && (*p) <= 57 )
 			goto st37;
@@ -905,7 +928,7 @@ case 37:
 		goto st35;
 	goto st0;
 tr14:
-#line 11 "src/http/req_parser.rl"
+#line 13 "src/http/req_parser.rl"
 	{
   mark = p;
 }
@@ -914,7 +937,7 @@ st38:
 	if ( ++p == pe )
 		goto _test_eof38;
 case 38:
-#line 918 "src/http/req_parser.cpp"
+#line 941 "src/http/req_parser.cpp"
 	switch( (*p) ) {
 		case 32: goto tr16;
 		case 33: goto st31;
@@ -940,29 +963,29 @@ st39:
 		goto _test_eof39;
 case 39:
 	switch( (*p) ) {
-		case 32: goto tr63;
-		case 33: goto tr64;
-		case 35: goto tr65;
-		case 37: goto tr66;
-		case 47: goto tr67;
-		case 58: goto tr68;
-		case 61: goto tr64;
-		case 63: goto tr69;
+		case 32: goto tr62;
+		case 33: goto tr63;
+		case 35: goto tr64;
+		case 37: goto tr65;
+		case 47: goto tr66;
+		case 58: goto tr67;
+		case 61: goto tr63;
+		case 63: goto tr68;
 		case 64: goto st47;
-		case 95: goto tr64;
-		case 126: goto tr64;
+		case 95: goto tr63;
+		case 126: goto tr63;
 	}
 	if ( (*p) < 65 ) {
 		if ( 36 <= (*p) && (*p) <= 59 )
-			goto tr64;
+			goto tr63;
 	} else if ( (*p) > 90 ) {
 		if ( 97 <= (*p) && (*p) <= 122 )
-			goto tr64;
+			goto tr63;
 	} else
-		goto tr64;
+		goto tr63;
 	goto st0;
-tr64:
-#line 11 "src/http/req_parser.rl"
+tr63:
+#line 13 "src/http/req_parser.rl"
 	{
   mark = p;
 }
@@ -971,16 +994,16 @@ st40:
 	if ( ++p == pe )
 		goto _test_eof40;
 case 40:
-#line 975 "src/http/req_parser.cpp"
+#line 998 "src/http/req_parser.cpp"
 	switch( (*p) ) {
-		case 32: goto tr71;
+		case 32: goto tr70;
 		case 33: goto st40;
-		case 35: goto tr73;
+		case 35: goto tr72;
 		case 37: goto st41;
-		case 47: goto tr75;
-		case 58: goto tr76;
+		case 47: goto tr74;
+		case 58: goto tr75;
 		case 61: goto st40;
-		case 63: goto tr77;
+		case 63: goto tr76;
 		case 64: goto st47;
 		case 95: goto st40;
 		case 126: goto st40;
@@ -994,8 +1017,8 @@ case 40:
 	} else
 		goto st40;
 	goto st0;
-tr66:
-#line 11 "src/http/req_parser.rl"
+tr65:
+#line 13 "src/http/req_parser.rl"
 	{
   mark = p;
 }
@@ -1004,7 +1027,7 @@ st41:
 	if ( ++p == pe )
 		goto _test_eof41;
 case 41:
-#line 1008 "src/http/req_parser.cpp"
+#line 1031 "src/http/req_parser.cpp"
 	if ( (*p) < 65 ) {
 		if ( 48 <= (*p) && (*p) <= 57 )
 			goto st42;
@@ -1027,27 +1050,29 @@ case 42:
 	} else
 		goto st40;
 	goto st0;
-tr68:
-#line 11 "src/http/req_parser.rl"
+tr67:
+#line 13 "src/http/req_parser.rl"
 	{
   mark = p;
 }
-#line 23 "src/http/req_parser.rl"
+#line 27 "src/http/req_parser.rl"
 	{
   store_parsed(mark, p, result.uri.hostname);
+  mark = nullptr;
 }
 	goto st43;
-tr76:
-#line 23 "src/http/req_parser.rl"
+tr75:
+#line 27 "src/http/req_parser.rl"
 	{
   store_parsed(mark, p, result.uri.hostname);
+  mark = nullptr;
 }
 	goto st43;
 st43:
 	if ( ++p == pe )
 		goto _test_eof43;
 case 43:
-#line 1051 "src/http/req_parser.cpp"
+#line 1076 "src/http/req_parser.cpp"
 	switch( (*p) ) {
 		case 32: goto tr16;
 		case 33: goto st44;
@@ -1063,7 +1088,7 @@ case 43:
 	if ( (*p) < 58 ) {
 		if ( (*p) > 46 ) {
 			if ( 48 <= (*p) && (*p) <= 57 )
-				goto tr81;
+				goto tr80;
 		} else if ( (*p) >= 36 )
 			goto st44;
 	} else if ( (*p) > 59 ) {
@@ -1131,29 +1156,29 @@ st47:
 		goto _test_eof47;
 case 47:
 	switch( (*p) ) {
-		case 32: goto tr63;
-		case 33: goto tr83;
-		case 35: goto tr65;
-		case 37: goto tr84;
-		case 47: goto tr67;
-		case 58: goto tr85;
-		case 61: goto tr83;
-		case 63: goto tr69;
+		case 32: goto tr62;
+		case 33: goto tr82;
+		case 35: goto tr64;
+		case 37: goto tr83;
+		case 47: goto tr66;
+		case 58: goto tr84;
+		case 61: goto tr82;
+		case 63: goto tr68;
 		case 64: goto st31;
-		case 95: goto tr83;
-		case 126: goto tr83;
+		case 95: goto tr82;
+		case 126: goto tr82;
 	}
 	if ( (*p) < 65 ) {
 		if ( 36 <= (*p) && (*p) <= 59 )
-			goto tr83;
+			goto tr82;
 	} else if ( (*p) > 90 ) {
 		if ( 97 <= (*p) && (*p) <= 122 )
-			goto tr83;
+			goto tr82;
 	} else
-		goto tr83;
+		goto tr82;
 	goto st0;
-tr83:
-#line 11 "src/http/req_parser.rl"
+tr82:
+#line 13 "src/http/req_parser.rl"
 	{
   mark = p;
 }
@@ -1162,16 +1187,16 @@ st48:
 	if ( ++p == pe )
 		goto _test_eof48;
 case 48:
-#line 1166 "src/http/req_parser.cpp"
+#line 1191 "src/http/req_parser.cpp"
 	switch( (*p) ) {
-		case 32: goto tr71;
+		case 32: goto tr70;
 		case 33: goto st48;
-		case 35: goto tr73;
+		case 35: goto tr72;
 		case 37: goto st49;
-		case 47: goto tr75;
-		case 58: goto tr88;
+		case 47: goto tr74;
+		case 58: goto tr87;
 		case 61: goto st48;
-		case 63: goto tr77;
+		case 63: goto tr76;
 		case 64: goto st31;
 		case 95: goto st48;
 		case 126: goto st48;
@@ -1185,8 +1210,8 @@ case 48:
 	} else
 		goto st48;
 	goto st0;
-tr84:
-#line 11 "src/http/req_parser.rl"
+tr83:
+#line 13 "src/http/req_parser.rl"
 	{
   mark = p;
 }
@@ -1195,7 +1220,7 @@ st49:
 	if ( ++p == pe )
 		goto _test_eof49;
 case 49:
-#line 1199 "src/http/req_parser.cpp"
+#line 1224 "src/http/req_parser.cpp"
 	if ( (*p) < 65 ) {
 		if ( 48 <= (*p) && (*p) <= 57 )
 			goto st50;
@@ -1218,27 +1243,29 @@ case 50:
 	} else
 		goto st48;
 	goto st0;
-tr85:
-#line 11 "src/http/req_parser.rl"
+tr84:
+#line 13 "src/http/req_parser.rl"
 	{
   mark = p;
 }
-#line 23 "src/http/req_parser.rl"
+#line 27 "src/http/req_parser.rl"
 	{
   store_parsed(mark, p, result.uri.hostname);
+  mark = nullptr;
 }
 	goto st51;
-tr88:
-#line 23 "src/http/req_parser.rl"
+tr87:
+#line 27 "src/http/req_parser.rl"
 	{
   store_parsed(mark, p, result.uri.hostname);
+  mark = nullptr;
 }
 	goto st51;
 st51:
 	if ( ++p == pe )
 		goto _test_eof51;
 case 51:
-#line 1242 "src/http/req_parser.cpp"
+#line 1269 "src/http/req_parser.cpp"
 	switch( (*p) ) {
 		case 32: goto tr16;
 		case 33: goto st31;
@@ -1252,7 +1279,7 @@ case 51:
 	if ( (*p) < 58 ) {
 		if ( (*p) > 47 ) {
 			if ( 48 <= (*p) && (*p) <= 57 )
-				goto tr90;
+				goto tr89;
 		} else if ( (*p) >= 36 )
 			goto st31;
 	} else if ( (*p) > 59 ) {
@@ -1264,8 +1291,8 @@ case 51:
 	} else
 		goto st31;
 	goto st0;
-tr90:
-#line 11 "src/http/req_parser.rl"
+tr89:
+#line 13 "src/http/req_parser.rl"
 	{
   mark = p;
 }
@@ -1274,7 +1301,7 @@ st52:
 	if ( ++p == pe )
 		goto _test_eof52;
 case 52:
-#line 1278 "src/http/req_parser.cpp"
+#line 1305 "src/http/req_parser.cpp"
 	switch( (*p) ) {
 		case 32: goto tr16;
 		case 33: goto st31;
@@ -1305,13 +1332,13 @@ st53:
 		goto _test_eof53;
 case 53:
 	switch( (*p) ) {
-		case 32: goto tr92;
+		case 32: goto tr91;
 		case 33: goto st31;
-		case 35: goto tr93;
+		case 35: goto tr92;
 		case 37: goto st32;
-		case 47: goto tr94;
+		case 47: goto tr93;
 		case 61: goto st31;
-		case 63: goto tr96;
+		case 63: goto tr95;
 		case 95: goto st31;
 		case 126: goto st31;
 	}
@@ -1335,13 +1362,13 @@ st54:
 		goto _test_eof54;
 case 54:
 	switch( (*p) ) {
-		case 32: goto tr92;
+		case 32: goto tr91;
 		case 33: goto st31;
-		case 35: goto tr93;
+		case 35: goto tr92;
 		case 37: goto st32;
-		case 47: goto tr94;
+		case 47: goto tr93;
 		case 61: goto st31;
-		case 63: goto tr96;
+		case 63: goto tr95;
 		case 95: goto st31;
 		case 126: goto st31;
 	}
@@ -1365,13 +1392,13 @@ st55:
 		goto _test_eof55;
 case 55:
 	switch( (*p) ) {
-		case 32: goto tr92;
+		case 32: goto tr91;
 		case 33: goto st31;
-		case 35: goto tr93;
+		case 35: goto tr92;
 		case 37: goto st32;
-		case 47: goto tr94;
+		case 47: goto tr93;
 		case 61: goto st31;
-		case 63: goto tr96;
+		case 63: goto tr95;
 		case 95: goto st31;
 		case 126: goto st31;
 	}
@@ -1395,13 +1422,13 @@ st56:
 		goto _test_eof56;
 case 56:
 	switch( (*p) ) {
-		case 32: goto tr92;
+		case 32: goto tr91;
 		case 33: goto st31;
-		case 35: goto tr93;
+		case 35: goto tr92;
 		case 37: goto st32;
-		case 47: goto tr94;
+		case 47: goto tr93;
 		case 61: goto st31;
-		case 63: goto tr96;
+		case 63: goto tr95;
 		case 95: goto st31;
 		case 126: goto st31;
 	}
@@ -1414,8 +1441,8 @@ case 56:
 	} else
 		goto st31;
 	goto st0;
-tr81:
-#line 11 "src/http/req_parser.rl"
+tr80:
+#line 13 "src/http/req_parser.rl"
 	{
   mark = p;
 }
@@ -1424,7 +1451,7 @@ st57:
 	if ( ++p == pe )
 		goto _test_eof57;
 case 57:
-#line 1428 "src/http/req_parser.cpp"
+#line 1455 "src/http/req_parser.cpp"
 	switch( (*p) ) {
 		case 32: goto tr16;
 		case 33: goto st44;
@@ -1457,13 +1484,13 @@ st58:
 		goto _test_eof58;
 case 58:
 	switch( (*p) ) {
-		case 32: goto tr92;
+		case 32: goto tr91;
 		case 33: goto st44;
-		case 35: goto tr93;
+		case 35: goto tr92;
 		case 37: goto st45;
-		case 47: goto tr94;
+		case 47: goto tr93;
 		case 61: goto st44;
-		case 63: goto tr96;
+		case 63: goto tr95;
 		case 64: goto st47;
 		case 95: goto st44;
 		case 126: goto st44;
@@ -1488,13 +1515,13 @@ st59:
 		goto _test_eof59;
 case 59:
 	switch( (*p) ) {
-		case 32: goto tr92;
+		case 32: goto tr91;
 		case 33: goto st44;
-		case 35: goto tr93;
+		case 35: goto tr92;
 		case 37: goto st45;
-		case 47: goto tr94;
+		case 47: goto tr93;
 		case 61: goto st44;
-		case 63: goto tr96;
+		case 63: goto tr95;
 		case 64: goto st47;
 		case 95: goto st44;
 		case 126: goto st44;
@@ -1519,13 +1546,13 @@ st60:
 		goto _test_eof60;
 case 60:
 	switch( (*p) ) {
-		case 32: goto tr92;
+		case 32: goto tr91;
 		case 33: goto st44;
-		case 35: goto tr93;
+		case 35: goto tr92;
 		case 37: goto st45;
-		case 47: goto tr94;
+		case 47: goto tr93;
 		case 61: goto st44;
-		case 63: goto tr96;
+		case 63: goto tr95;
 		case 64: goto st47;
 		case 95: goto st44;
 		case 126: goto st44;
@@ -1550,13 +1577,13 @@ st61:
 		goto _test_eof61;
 case 61:
 	switch( (*p) ) {
-		case 32: goto tr92;
+		case 32: goto tr91;
 		case 33: goto st44;
-		case 35: goto tr93;
+		case 35: goto tr92;
 		case 37: goto st45;
-		case 47: goto tr94;
+		case 47: goto tr93;
 		case 61: goto st44;
-		case 63: goto tr96;
+		case 63: goto tr95;
 		case 64: goto st47;
 		case 95: goto st44;
 		case 126: goto st44;
@@ -1571,7 +1598,7 @@ case 61:
 		goto st44;
 	goto st0;
 tr15:
-#line 11 "src/http/req_parser.rl"
+#line 13 "src/http/req_parser.rl"
 	{
   mark = p;
 }
@@ -1580,7 +1607,7 @@ st62:
 	if ( ++p == pe )
 		goto _test_eof62;
 case 62:
-#line 1584 "src/http/req_parser.cpp"
+#line 1611 "src/http/req_parser.cpp"
 	switch( (*p) ) {
 		case 32: goto tr16;
 		case 33: goto st9;
@@ -1588,7 +1615,7 @@ case 62:
 		case 37: goto st29;
 		case 43: goto st62;
 		case 47: goto st31;
-		case 58: goto tr104;
+		case 58: goto tr103;
 		case 59: goto st9;
 		case 61: goto st9;
 		case 63: goto tr21;
@@ -1608,17 +1635,18 @@ case 62:
 	} else
 		goto st62;
 	goto st0;
-tr104:
-#line 39 "src/http/req_parser.rl"
+tr103:
+#line 47 "src/http/req_parser.rl"
 	{
   store_parsed(mark, p, result.uri.scheme);
+  mark = nullptr;
 }
 	goto st63;
 st63:
 	if ( ++p == pe )
 		goto _test_eof63;
 case 63:
-#line 1622 "src/http/req_parser.cpp"
+#line 1650 "src/http/req_parser.cpp"
 	switch( (*p) ) {
 		case 33: goto st64;
 		case 37: goto st65;
@@ -1684,7 +1712,7 @@ case 66:
 		goto st64;
 	goto st0;
 tr2:
-#line 11 "src/http/req_parser.rl"
+#line 13 "src/http/req_parser.rl"
 	{
   mark = p;
 }
@@ -1693,7 +1721,7 @@ st67:
 	if ( ++p == pe )
 		goto _test_eof67;
 case 67:
-#line 1697 "src/http/req_parser.cpp"
+#line 1725 "src/http/req_parser.cpp"
 	if ( (*p) == 69 )
 		goto st68;
 	goto st0;
@@ -1705,7 +1733,7 @@ case 68:
 		goto st7;
 	goto st0;
 tr3:
-#line 11 "src/http/req_parser.rl"
+#line 13 "src/http/req_parser.rl"
 	{
   mark = p;
 }
@@ -1714,7 +1742,7 @@ st69:
 	if ( ++p == pe )
 		goto _test_eof69;
 case 69:
-#line 1718 "src/http/req_parser.cpp"
+#line 1746 "src/http/req_parser.cpp"
 	if ( (*p) == 69 )
 		goto st70;
 	goto st0;
@@ -1733,7 +1761,7 @@ case 71:
 		goto st7;
 	goto st0;
 tr4:
-#line 11 "src/http/req_parser.rl"
+#line 13 "src/http/req_parser.rl"
 	{
   mark = p;
 }
@@ -1742,7 +1770,7 @@ st72:
 	if ( ++p == pe )
 		goto _test_eof72;
 case 72:
-#line 1746 "src/http/req_parser.cpp"
+#line 1774 "src/http/req_parser.cpp"
 	if ( (*p) == 80 )
 		goto st73;
 	goto st0;
@@ -1782,7 +1810,7 @@ case 77:
 		goto st7;
 	goto st0;
 tr5:
-#line 11 "src/http/req_parser.rl"
+#line 13 "src/http/req_parser.rl"
 	{
   mark = p;
 }
@@ -1791,7 +1819,7 @@ st78:
 	if ( ++p == pe )
 		goto _test_eof78;
 case 78:
-#line 1795 "src/http/req_parser.cpp"
+#line 1823 "src/http/req_parser.cpp"
 	switch( (*p) ) {
 		case 79: goto st79;
 		case 85: goto st68;
@@ -1889,7 +1917,7 @@ case 79:
 	_out: {}
 	}
 
-#line 210 "src/http/req_parser.rl"
+#line 217 "src/http/req_parser.rl"
 
     if (cs >= http_parser_first_final) {
       bytes_read = static_cast<size_t>(p - data);
@@ -1897,12 +1925,14 @@ case 79:
     } else if (cs == http_parser_error) {
       return RequestParsingStatus::Error;
     } else {
-      if (!mark) {
-        LOG_ERROR("mark pointer is null");
-        return RequestParsingStatus::Error;
+      if (mark) {
+        partial_buf = partial_buf + std::string(mark, static_cast<size_t>(pe - mark));
+        if (partial_buf.size() > PARSER_MAX_PARTIAL_BUF_LEN) {
+          LOG_WARN("partial_buf is getting too large, aborting");
+          return RequestParsingStatus::Error;
+        }
+        mark_active = true;
       }
-      partial_buf = std::string(mark, static_cast<size_t>(pe - mark));
-      mark_active = true;
       return RequestParsingStatus::NeedMoreData;
     }   
 }

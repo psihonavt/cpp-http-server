@@ -1,6 +1,8 @@
 #include "catch2/catch_test_macros.hpp"
+#include "http/config.h"
 #include "http/headers.h"
 #include "http/req_parser.h"
+#include "utils/helpers.h"
 #include <string>
 #include <tuple>
 #include <utility>
@@ -109,23 +111,48 @@ TEST_CASE("Request Line parsing", "[http_parser] [request_line]")
 
 TEST_CASE("Request parsing chunked data", "[http_parser]")
 {
-    std::string recv_buf1 { "GET /hel" };
-    std::string recv_buf2 { "lo_world HTTP/1.1\r\n\r\n" };
     Http::RequestParser parser {};
     parser.init();
-    auto status { parser.parse_request(recv_buf1.data(), recv_buf1.size(), 0) };
-    REQUIRE(status == Http::RequestParsingStatus::NeedMoreData);
-    status = parser.parse_request(recv_buf2.data(), recv_buf2.size(), 0);
-    REQUIRE(status == Http::RequestParsingStatus::Finished);
-    REQUIRE(parser.result.uri.path == "/hello_world");
-    check_parse_request_line(parser.result,
-        ExpectedRequest {
-            .method = "GET",
-            .version = "1.1",
-            .hostname = "",
-            .scheme = "",
-            .path = "/hello_world",
-        });
+
+    SECTION("simple")
+    {
+        std::string recv_buf1 { "GET /hel" };
+        std::string recv_buf2 { "lo_world HTTP/1.1\r\n\r\n" };
+        auto status { parser.parse_request(recv_buf1.data(), recv_buf1.size(), 0) };
+        REQUIRE(status == Http::RequestParsingStatus::NeedMoreData);
+        status = parser.parse_request(recv_buf2.data(), recv_buf2.size(), 0);
+        REQUIRE(status == Http::RequestParsingStatus::Finished);
+        check_parse_request_line(parser.result,
+            ExpectedRequest {
+                .method = "GET",
+                .version = "1.1",
+                .hostname = "",
+                .scheme = "",
+                .path = "/hello_world",
+            });
+    }
+
+    SECTION("URI that spans an entire buffer")
+    {
+        std::string recv_buf1 { "GET /hel" };
+        std::string recv_buf2 { "lo_world" };
+        std::string recv_buf3 { "~ HTTP/1.1\r\n\r\n" };
+        auto status { parser.parse_request(recv_buf1.data(), recv_buf1.size(), 0) };
+        REQUIRE(status == Http::RequestParsingStatus::NeedMoreData);
+        status = parser.parse_request(recv_buf2.data(), recv_buf2.size(), 0);
+        REQUIRE(status == Http::RequestParsingStatus::NeedMoreData);
+        status = parser.parse_request(recv_buf3.data(), recv_buf3.size(), 0);
+        REQUIRE(status == Http::RequestParsingStatus::Finished);
+
+        check_parse_request_line(parser.result,
+            ExpectedRequest {
+                .method = "GET",
+                .version = "1.1",
+                .hostname = "",
+                .scheme = "",
+                .path = "/hello_world~",
+            });
+    }
 }
 
 TEST_CASE("Request parsing bad requests", "[http_parser]")
@@ -163,7 +190,7 @@ TEST_CASE("Headers parsing", "[http_parser]")
 {
     std::vector<std::tuple<std::string, std::string, Http::Headers>> data {
         { "standard headers",
-            "GET / HTTP/1.1\r\nHost: example.com\r\nContent-Type: text/plain\r\n\r\n",
+            "GET / HTTP/1.1\r\nHost: example.com\r\nContent-Type:      text/plain\r\n\r\n",
             make_headers({ { "Host", "example.com" }, { "Content-Type", "text/plain" } }) },
         { "empty header value",
             "GET / HTTP/1.1\r\nHost: \r\nContent-Type: text/plain  \r\n\r\n",
@@ -198,7 +225,7 @@ TEST_CASE("Chunked headers parsing", "[http_parser]")
     parser.init();
 
     for (auto& [chunks, headers] : data) {
-        SECTION("section")
+        SECTION(str_vector_join(chunks, ""))
         {
             auto status { Http::RequestParsingStatus::Error };
             for (auto& chunk : chunks) {
@@ -231,4 +258,20 @@ TEST_CASE("Multiple requests in a buffer", "[http_parser]")
     parser.init();
     status = parser.parse_request(buffer.data(), buffer.size(), offset);
     REQUIRE(status == Http::RequestParsingStatus::NeedMoreData);
+}
+
+TEST_CASE("partial_buf overflow results in error", "[http_parser]")
+{
+    Http::RequestParser parser {};
+    parser.init();
+
+    std::string buf1 { "GET /" };
+    auto buf2 = std::string(Http::PARSER_MAX_PARTIAL_BUF_LEN, 'a');
+    std::string buf3 { " HTTP/1.1\r\n\r\n" };
+
+    auto status { parser.parse_request(buf1.data(), buf1.size(), 0) };
+    REQUIRE(status == Http::RequestParsingStatus::NeedMoreData);
+
+    status = parser.parse_request(buf2.data(), buf2.size(), 0);
+    REQUIRE(status == Http::RequestParsingStatus::Error);
 }

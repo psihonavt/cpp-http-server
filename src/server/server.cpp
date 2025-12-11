@@ -1,43 +1,11 @@
-#include "config/server.h"
-#include "CLI/CLI.hpp"
-#include "http/http.h"
-#include "http/req_reader.h"
-#include "http/request.h"
-#include "http/response.h"
-#include "utils/files.h"
-#include "utils/logging.h"
-#include "utils/net.h"
-#include <CLI/CLI.hpp>
-#include <_string.h>
-#include <arpa/inet.h>
-#include <array>
-#include <cassert>
-#include <cerrno>
-#include <chrono>
-#include <csignal>
-#include <cstddef>
-#include <cstdlib>
-#include <cstring>
+#include "server.h"
+#include "config.h"
+#include "globals.h"
+#include "signals.h"
+#include "utils/helpers.h"
 #include <fcntl.h>
-#include <iostream>
-#include <netdb.h>
-#include <netinet/in.h>
-#include <optional>
-#include <poll.h>
-#include <string>
-#include <sys/fcntl.h>
-#include <sys/poll.h>
-#include <sys/signal.h>
-#include <sys/socket.h>
-#include <system_error>
-#include <unistd.h>
-#include <utility>
-#include <vector>
 
-namespace Globals {
-int s_singnal_pipe_wfd { -1 };
-int s_singnal_pipe_rfd { -1 };
-};
+namespace Server {
 
 Http::Response handle_http_request(Http::Request const& req, std::filesystem::path const& server_root)
 {
@@ -57,130 +25,6 @@ Http::Response handle_http_request(Http::Request const& req, std::filesystem::pa
         }
     }
 }
-
-void signals_handler(int sig)
-{
-    if (Globals::s_singnal_pipe_wfd != -1) {
-        write(Globals::s_singnal_pipe_wfd, &sig, sizeof(sig));
-    }
-}
-
-void setup_signal_handling()
-{
-    int signal_pipe[2];
-    if (pipe(signal_pipe) == -1) {
-        LOG_ERROR("Failed to create a pipe for signal notifiers: {}", strerror(errno));
-        std::exit(1);
-    };
-
-    auto pw_flags = fcntl(signal_pipe[1], F_GETFL);
-    if ((fcntl(signal_pipe[1], F_SETFL, pw_flags | O_NONBLOCK)) == -1) {
-        LOG_ERROR("Failed to mark the writing end of a pipe as non-blocking: {}", strerror(errno));
-        std::exit(1);
-    };
-    Globals::s_singnal_pipe_rfd = signal_pipe[0];
-    Globals::s_singnal_pipe_wfd = signal_pipe[1];
-
-    std::array signals_to_handle = {
-        SIGINT,
-        SIGABRT,
-        SIGALRM,
-        SIGINFO,
-        SIGHUP,
-        SIGTERM,
-    };
-    struct sigaction sa;
-    sa.sa_handler = signals_handler;
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = SA_RESTART;
-
-    for (auto sig : signals_to_handle) {
-        if (sigaction(sig, &sa, nullptr) == -1) {
-            LOG_ERROR("Failed to register a signal handler: {}", strerror(errno));
-            std::exit(1);
-        }
-    }
-
-    std::array signals_to_ignore = {
-        SIGPIPE,
-    };
-
-    for (auto sig : signals_to_ignore) {
-        signal(sig, SIG_IGN);
-    }
-}
-
-class Connection {
-public:
-    Socket client;
-    long long connection_id;
-
-    std::vector<Http::Response> responses_queue;
-    std::optional<Http::ResponseWriter> cur_response_writer;
-    Http::RequestReader request_reader;
-
-    Connection(Socket& cl)
-        : client { std::move(cl) }
-        , responses_queue {}
-        , cur_response_writer { std::nullopt }
-        , request_reader {}
-    {
-        connection_id = std::chrono::system_clock::now().time_since_epoch().count();
-    }
-
-    bool is_sending()
-    {
-        if (cur_response_writer && !cur_response_writer->is_done()) {
-            return true;
-        }
-        if (!responses_queue.empty()) {
-            return true;
-        }
-        return false;
-    }
-
-    bool send_pending()
-    {
-        if (!is_sending()) {
-            LOG_ERROR("[{}][s:{}] Connection isn't sending data", connection_id, client.fd());
-            return false;
-        }
-
-        if (!cur_response_writer) {
-            cur_response_writer.emplace(std::move(responses_queue.back()), client);
-            responses_queue.pop_back();
-        }
-
-        auto maybe_erorr { cur_response_writer->write() };
-        if (maybe_erorr) {
-            LOG_ERROR("[{}][s:{}] Error writing response: {}", connection_id, client.fd(), maybe_erorr->message());
-            return false;
-        }
-
-        if (cur_response_writer->is_done()) {
-            cur_response_writer.reset();
-        }
-        return true;
-    }
-
-    bool read_pending_requests()
-    {
-        auto [error_reading, error_parsing] { request_reader.read_requests(client) };
-        return !(error_reading || error_parsing);
-    }
-
-    void clear_pending_requests()
-    {
-        request_reader.erase_requests();
-    }
-};
-
-struct ServerContext {
-    Socket const& server;
-    std::filesystem::path const& server_root;
-    std::unordered_map<int, Connection> connections;
-    PfdsHolder pfds;
-};
 
 Socket start_server(int port)
 {
@@ -232,7 +76,7 @@ Socket start_server(int port)
         std::exit(1);
     }
 
-    if (listen(*server_socket, Config::Server::LISTEN_BACKLOG) == -1) {
+    if (listen(*server_socket, LISTEN_BACKLOG) == -1) {
         LOG_ERROR("Error listening at {}:{} - {}", hostname, ip, strerror(errno));
         std::exit(1);
     }
@@ -326,21 +170,6 @@ std::optional<PfdsChange> handle_send_events(ServerContext& ctx, int receiver_fd
     return {};
 }
 
-void handle_signal_event()
-{
-
-    assert(Globals::s_singnal_pipe_rfd != -1 && "signal pipe rfd must be initialized");
-    int signum;
-    auto received = read(Globals::s_singnal_pipe_rfd, &signum, sizeof(signum));
-    if (received == -1) {
-        LOG_WARN("Failed to read from a signal pipe: {}", strerror(errno));
-        return;
-    }
-
-    LOG_INFO("GOT A SIGNAL FROM THE KERNEL: {}", strsignal(signum));
-    // std::exit(1);
-}
-
 void process_connections(ServerContext& ctx)
 {
     std::vector<std::optional<PfdsChange>> changes {};
@@ -349,7 +178,7 @@ void process_connections(ServerContext& ctx)
         if (pfd.revents & (POLLIN | POLLHUP)) {
             if (pfd.fd == ctx.server) {
                 changes.push_back(establish_connection(ctx));
-            } else if (pfd.fd == Globals::s_singnal_pipe_rfd) {
+            } else if (pfd.fd == Globals::s_signal_pipe_rfd) {
                 handle_signal_event();
             } else {
                 changes.push_back(handle_recv_events(ctx, pfd.fd));
@@ -367,52 +196,4 @@ void process_connections(ServerContext& ctx)
     }
 }
 
-int main(int argc, char** argv)
-{
-    CLI::App app { "Best HTTP Server" };
-    int port { Config::Server::DEFAULT_PORT };
-    // std::filesystem::path server_root { "/Users/cake-icing/tmp/cpp/learncpp/www.learncpp.com/" };
-    std::filesystem::path server_root { "/Users/cake-icing/tmp/dad70/dad70" };
-    int listen_backlog { Config::Server::LISTEN_BACKLOG };
-    LogLevel log_level { LogLevel::INFO };
-    app.add_option("-p, --port", port, "server port");
-    app.add_option("-r, --server-root", server_root, "server root (serve files from here)");
-    app.add_option("-b, --listen-backlog", listen_backlog, "listening backlog");
-    app.add_option("-l, --log-level", log_level, "log level");
-
-    CLI11_PARSE(app, argc, argv);
-
-    setup_logging(log_level);
-    setup_signal_handling();
-    assert(Globals::s_singnal_pipe_rfd != -1 && "read signal pipe must be initialized.");
-    LOG_INFO("Starting the server ...");
-    auto server_socket { start_server(port) };
-
-    PfdsHolder pfds {};
-    pfds.handle_change(PfdsChange { .fd = server_socket, .action = PfdsChangeAction::Add, .events = POLLIN });
-    pfds.handle_change(PfdsChange { .fd = Globals::s_singnal_pipe_rfd, .action = PfdsChangeAction::Add, .events = POLLIN });
-
-    ServerContext ctx {
-        .server = server_socket,
-        .server_root = server_root,
-        .connections = {},
-        .pfds = std::move(pfds),
-    };
-
-    while (true) {
-        int poll_count { ctx.pfds.do_poll() };
-        if (poll_count == -1) {
-            LOG_ERROR("Polling failed: {}", strerror(errno));
-            // maybe there is something in our signal pipe, read and display it
-            handle_signal_event();
-            std::exit(1);
-        }
-
-        process_connections(ctx);
-    }
-
-    close(Globals::s_singnal_pipe_rfd);
-    close(Globals::s_singnal_pipe_wfd);
-
-    return 0;
 }

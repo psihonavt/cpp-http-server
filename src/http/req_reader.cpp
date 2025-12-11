@@ -1,5 +1,5 @@
 #include "http/req_reader.h"
-#include "config/server.h"
+#include "config.h"
 #include "http/req_parser.h"
 #include "utils/logging.h"
 #include "utils/net.h"
@@ -15,12 +15,12 @@ read_requests_result RequestReader::read_requests(Socket const& client)
     bool error_reading { false };
     bool error_parsing { false };
 
-    char buffer[Config::Server::RECV_BUFFER_SIZE];
+    char buffer[PARSER_MAX_READ_BUF_LEN];
 
     while (true) {
-        auto n = recv(client.fd(), buffer, Config::Server::RECV_BUFFER_SIZE, 0);
+        auto n = recv(client.fd(), buffer, PARSER_MAX_PARTIAL_BUF_LEN, 0);
         if (n == 0) {
-            LOG_WARN("[s:{}] closed connection", client.fd());
+            LOG_DEBUG("[s:{}] closed connection", client.fd());
             error_reading = true;
             break;
         } else if (n < 0) {

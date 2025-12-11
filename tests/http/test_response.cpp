@@ -1,5 +1,5 @@
 #include "catch2/catch_test_macros.hpp"
-#include "config/server.h"
+#include "http/config.h"
 #include "http/errors.h"
 #include "http/headers.h"
 #include "http/response.h"
@@ -121,7 +121,7 @@ TEST_CASE("Testing HTTP response writer")
     SECTION("Large headers")
     {
         Http::Headers h {};
-        h.set("x-too-large", std::string(Config::Server::HEADERS_LIMIT_SIZE + 10, 'x'));
+        h.set("x-too-large", std::string(Http::MAX_HEADERS_LEN + 10, 'x'));
         auto resp = Http::Response(Http::StatusCode::OK, h, std::nullopt);
 
         Http::ResponseWriter w { std::move(resp), sender };

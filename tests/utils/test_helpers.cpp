@@ -23,3 +23,22 @@ TEST_CASE("Testing helper functions")
     v.emplace_back("b");
     REQUIRE(str_vector_join(v) == "a, b");
 }
+
+TEST_CASE("Test string trimming")
+{
+    std::string a;
+    a = "abc";
+    REQUIRE(str_trim(a) == "abc");
+
+    a = "abc  ";
+    REQUIRE(str_trim(a) == "abc");
+
+    a = " abc  ";
+    REQUIRE(str_trim(a) == "abc");
+
+    a = "";
+    REQUIRE(str_trim(a) == "");
+
+    a = " ";
+    REQUIRE(str_trim(a) == "");
+}

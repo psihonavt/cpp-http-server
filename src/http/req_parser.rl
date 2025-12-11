@@ -1,5 +1,7 @@
 #include "req_parser.h"
+#include "config.h"
 #include "utils/logging.h"
+#include "utils/helpers.h"
 #include <cstring>
 #include <cassert>
 
@@ -14,42 +16,52 @@ action mark {
 
 action get_http_version {
   store_parsed(mark, fpc, result.proto);
+  mark = nullptr;
 }
 
 action get_http_method {
   store_parsed(mark, fpc, result.method);
+  mark = nullptr;
 }
 
 action get_hostname {
   store_parsed(mark, fpc, result.uri.hostname);
+  mark = nullptr;
 }
 
 action get_query {
   store_parsed(mark, fpc, result.uri.query);
+  mark = nullptr;
 }
 
 action get_fragment {
   store_parsed(mark, fpc, result.uri.fragment);
+  mark = nullptr;
 }
 
 action get_path {
   store_parsed(mark, fpc, result.uri.path);
+  mark = nullptr;
 }
 
 action get_scheme {
   store_parsed(mark, fpc, result.uri.scheme);
+  mark = nullptr;
 }
 
 action get_port {
   store_parsed(mark, fpc, result.uri.port);
+  mark = nullptr;
 }
 
 action get_field_value {
   store_parsed_header_value(mark, fpc);
+  mark = nullptr;
 }
 
 action get_field_name {
   store_parsed_header_name(mark, fpc);
+  mark = nullptr;
 }
 
 action done {
@@ -119,7 +131,7 @@ request_line = http_method ascii_space request_uri ascii_space http_version CRLF
 
 field_value = any* >mark %get_field_value;
 field_name = (token -- ":")+ >mark %get_field_name;
-message_header = field_name ":" ows field_value:> CRLF;
+message_header = field_name ":" field_value :> CRLF;
 
 request = request_line message_header* (CRLF @done);
 
@@ -155,12 +167,7 @@ void RequestParser::store_parsed_header_value(char const* start, char const* end
   }
   auto value = partial_buf + std::string(start, static_cast<size_t>(end - start));
 
-  size_t ws_pos {value.find_last_not_of(" \t")};
-  if (ws_pos != std::string::npos){
-    value.erase(ws_pos + 1);
-  }
-
-  result.headers.set(cur_header_name, value);
+  result.headers.set(cur_header_name, str_trim(value));
 
   mark_active = false;
   partial_buf = "";
@@ -214,12 +221,14 @@ RequestParsingStatus RequestParser::parse_request(char const* data, size_t len, 
     } else if (cs == http_parser_error) {
       return RequestParsingStatus::Error;
     } else {
-      if (!mark) {
-        LOG_ERROR("mark pointer is null");
-        return RequestParsingStatus::Error;
+      if (mark) {
+        partial_buf = partial_buf + std::string(mark, static_cast<size_t>(pe - mark));
+        if (partial_buf.size() > PARSER_MAX_PARTIAL_BUF_LEN) {
+          LOG_WARN("partial_buf is getting too large, aborting");
+          return RequestParsingStatus::Error;
+        }
+        mark_active = true;
       }
-      partial_buf = std::string(mark, static_cast<size_t>(pe - mark));
-      mark_active = true;
       return RequestParsingStatus::NeedMoreData;
     }   
 }
