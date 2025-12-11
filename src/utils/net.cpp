@@ -1,5 +1,4 @@
 #include "net.h"
-#include "config/server.h"
 #include <arpa/inet.h>
 #include <cassert>
 #include <cstddef>
@@ -12,12 +11,13 @@
 
 std::pair<std::string, std::string> get_ip_and_hostname(addrinfo* ai)
 {
-    std::string hostname(Config::Server::get_hostname_lengh(), '\0');
+    size_t max_hostname_len { 4096 };
+    std::string hostname(max_hostname_len, '\0');
     std::string ip(INET6_ADDRSTRLEN, '\0');
 
     if (ai) {
         if (ai->ai_canonname) {
-            strncpy(hostname.data(), ai->ai_canonname, Config::Server::get_hostname_lengh());
+            strncpy(hostname.data(), ai->ai_canonname, max_hostname_len);
         }
 
         if (ai->ai_family == PF_INET6) {

@@ -1,14 +1,15 @@
 #pragma once
 
-#include <map>
 #include <optional>
+#include <ostream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace Http {
 
 struct Headers {
-    std::map<std::string, std::vector<std::string>> headers;
+    std::unordered_map<std::string, std::vector<std::string>> headers;
 
     std::vector<std::string> const get(std::string const& field) const;
     void set(std::string const& field, std::string const& value);
@@ -22,12 +23,19 @@ struct Headers {
     std::optional<int> content_length() const;
     std::optional<std::string> content_type() const;
 
-    std::map<std::string, std::vector<std::string>> const& all() const
+    std::unordered_map<std::string, std::vector<std::string>> const& all() const
     {
         return headers;
+    }
+
+    size_t size() const
+    {
+        return headers.size();
     }
 };
 
 Headers get_default_headers(int content_length, std::string const& content_type);
 std::string canonize_header_field(std::string const& field);
+bool operator==(Headers const& h1, Headers const& h2);
+std::ostream& operator<<(std::ostream& cout, Headers const& h);
 }

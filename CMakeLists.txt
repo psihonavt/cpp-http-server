@@ -34,11 +34,7 @@ else()
 endif()
 
 add_executable(server
-  src/server.cpp
-)
-
-add_executable(test_client
-  src/test_client.cpp
+  src/main.cpp
 )
 
 add_library(utils STATIC
@@ -47,12 +43,13 @@ add_library(utils STATIC
   src/utils/net.cpp
   src/utils/helpers.cpp
   src/http/errors.cpp
-  src/http/parser.cpp
-  src/http/http.cpp
+  src/http/req_parser.cpp
+  src/http/req_reader.cpp
   src/http/headers.cpp
-  src/http/request.cpp
   src/http/response.cpp
   src/http/mime.cpp
+  src/server/server.cpp
+  src/server/signals.cpp
 )
 target_include_directories(utils PUBLIC ${CMAKE_SOURCE_DIR}/src)
 
@@ -70,9 +67,6 @@ target_link_libraries(server PRIVATE utils CLI11::CLI11)
 target_compile_options(server PRIVATE ${MY_COMPILE_FLAGS} ${MY_SANITIZING_FLAGS})
 target_link_options(server PRIVATE ${MY_SANITIZING_FLAGS})
 
-target_compile_options(test_client PRIVATE ${MY_COMPILE_FLAGS} ${MY_SANITIZING_FLAGS})
-target_link_options(test_client PRIVATE ${MY_SANITIZING_FLAGS})
-
 #### tests ####
 FetchContent_Declare(
   Catch2
@@ -86,6 +80,7 @@ add_executable(tests
   tests/utils/test_helpers.cpp
   tests/http/test_response.cpp
   tests/http/test_http_parser.cpp
+  tests/http/test_req_reader.cpp
   tests/http/test_headers.cpp
   tests/http/test_mime.cpp
   tests/http/test_urls.cpp

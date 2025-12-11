@@ -1,9 +1,15 @@
 #include "catch2/catch_test_macros.hpp"
-#include "http/parser.h"
+#include "http/config.h"
+#include "http/headers.h"
+#include "http/req_parser.h"
+#include "utils/helpers.h"
+#include <format>
 #include <string>
+#include <tuple>
 #include <utility>
+#include <vector>
 
-struct ExpectedRequestLine {
+struct ExpectedRequest {
     std::string method { "" };
     std::string version { "" };
     std::string hostname { "" };
@@ -12,69 +18,69 @@ struct ExpectedRequestLine {
     std::string query { "" };
     std::string fragment { "" };
     std::string port { "" };
+    Http::Headers expected_headers {};
 };
 
-void check_parse_request_line(HttpRequest const& req, ExpectedRequestLine const& erl)
+void check_parse_request_line(Http::Request const& req, ExpectedRequest const& erl)
 {
     CHECK(req.method == erl.method);
-    CHECK(req.version == erl.version);
+    CHECK(req.proto == erl.version);
     CHECK(req.uri.path == erl.path);
     CHECK(req.uri.query == erl.query);
     CHECK(req.uri.scheme == erl.scheme);
     CHECK(req.uri.port == erl.port);
+    CHECK(req.headers == erl.expected_headers);
 }
 
 TEST_CASE("Request Line parsing", "[http_parser] [request_line]")
 {
 
-    HttpRequest http_request {};
-
-    std::vector<std::pair<std::string, ExpectedRequestLine>> uris {
-        { std::string("GET / HTTP/1.1\r\n"),
-            ExpectedRequestLine {
+    std::vector<std::pair<std::string, ExpectedRequest>> uris {
+        { std::string("GET / HTTP/1.1\r\n\r\n"),
+            ExpectedRequest {
                 .method = "GET",
                 .version = "1.1",
                 .path = "/" } },
-        { std::string("GET /index.html HTTP/1.1\r\n"),
-            ExpectedRequestLine {
+        { std::string("GET /index.html HTTP/1.1\r\n\r\n"),
+            ExpectedRequest {
                 .method = "GET",
                 .version = "1.1",
                 .path = "/index.html" } },
-        { std::string("POST /api/users HTTP/1.1\r\n"),
-            ExpectedRequestLine {
+        { std::string("POST /api/users HTTP/1.1\r\n\r\n"),
+            ExpectedRequest {
                 .method = "POST",
                 .version = "1.1",
                 .path = "/api/users" } },
-        { std::string("DELETE /resource/123 HTTP/1.0\r\n"),
-            ExpectedRequestLine {
+        { std::string("DELETE /resource/123 HTTP/1.0\r\n\r\n"),
+            ExpectedRequest {
                 .method = "DELETE",
                 .version = "1.0",
                 .path = "/resource/123" } },
-        { std::string("GET /search?q=test&b=c; HTTP/1.1\r\n"),
-            ExpectedRequestLine {
+        { std::string("GET /search?q=test&b=c; HTTP/1.1\r\n\r\n"),
+            ExpectedRequest {
                 .method = "GET",
                 .version = "1.1",
                 .path = "/search",
                 .query = "q=test&b=c;",
             } },
-        { std::string("GET /search/?q=test&redirect=/home#wtf HTTP/1.1\r\n"),
-            ExpectedRequestLine {
+        { std::string("GET /search/?q=test&redirect=/home#wtf HTTP/1.1\r\n\r\n"),
+            ExpectedRequest {
                 .method = "GET",
                 .version = "1.1",
                 .path = "/search/",
                 .query = "q=test&redirect=/home",
                 .fragment = "wtf",
             } },
-        { std::string("POST https://example.com/object/id123 HTTP/1.1\r\n"),
-            ExpectedRequestLine {
+        { std::string("POST https://example.com/object/id123 HTTP/1.1\r\n\r\n"),
+            ExpectedRequest {
                 .method = "POST",
                 .version = "1.1",
                 .hostname = "example.com",
                 .scheme = "https",
                 .path = "/object/id123",
             } },
-        { std::string("GET http://127.0.1.3:8081/deal%20s#latest HTTP/1.1\r\n"),
-            ExpectedRequestLine {
+        { std::string("GET http://127.0.1.3:8081/deal%20s#latest HTTP/1.1\r\n\r\n"),
+            ExpectedRequest {
                 .method = "GET",
                 .version = "1.1",
                 .hostname = "127.0.1.3",
@@ -83,27 +89,211 @@ TEST_CASE("Request Line parsing", "[http_parser] [request_line]")
                 .fragment = "latest",
                 .port = "8081",
             } },
-        { std::string("OPTIONS * HTTP/1.1\r\n"),
-            ExpectedRequestLine {
+        { std::string("OPTIONS * HTTP/1.1\r\n\r\n"),
+            ExpectedRequest {
                 .method = "OPTIONS",
                 .version = "1.1",
                 .path = "*",
             } },
     };
 
-    for (auto const& pair : uris) {
+    Http::RequestParser parser {};
+    parser.init();
+    for (auto const& [request_line, expected] : uris) {
 
-        SECTION(pair.first)
+        SECTION(request_line)
         {
-            auto uri { pair.first };
-            auto is_parsed { parse_http_request(uri.c_str(), uri.size(), &http_request) };
-            REQUIRE(is_parsed);
-            check_parse_request_line(http_request, pair.second);
+            auto status { parser.parse_request(request_line.data(), request_line.size(), 0) };
+            REQUIRE(status == Http::RequestParsingStatus::Finished);
+            check_parse_request_line(parser.result, expected);
         }
     }
 }
 
-TEST_CASE("Something different", "[http_parser]")
+TEST_CASE("Request parsing chunked data", "[http_parser]")
 {
-    REQUIRE(1 == 1);
+    Http::RequestParser parser {};
+    parser.init();
+
+    SECTION("simple")
+    {
+        std::string recv_buf1 { "GET /hel" };
+        std::string recv_buf2 { "lo_world HTTP/1.1\r\n\r\n" };
+        auto status { parser.parse_request(recv_buf1.data(), recv_buf1.size(), 0) };
+        REQUIRE(status == Http::RequestParsingStatus::NeedMoreData);
+        status = parser.parse_request(recv_buf2.data(), recv_buf2.size(), 0);
+        REQUIRE(status == Http::RequestParsingStatus::Finished);
+        check_parse_request_line(parser.result,
+            ExpectedRequest {
+                .method = "GET",
+                .version = "1.1",
+                .hostname = "",
+                .scheme = "",
+                .path = "/hello_world",
+            });
+    }
+
+    SECTION("URI that spans an entire buffer")
+    {
+        std::string recv_buf1 { "GET /hel" };
+        std::string recv_buf2 { "lo_world" };
+        std::string recv_buf3 { "~ HTTP/1.1\r\n\r\n" };
+        auto status { parser.parse_request(recv_buf1.data(), recv_buf1.size(), 0) };
+        REQUIRE(status == Http::RequestParsingStatus::NeedMoreData);
+        status = parser.parse_request(recv_buf2.data(), recv_buf2.size(), 0);
+        REQUIRE(status == Http::RequestParsingStatus::NeedMoreData);
+        status = parser.parse_request(recv_buf3.data(), recv_buf3.size(), 0);
+        REQUIRE(status == Http::RequestParsingStatus::Finished);
+
+        check_parse_request_line(parser.result,
+            ExpectedRequest {
+                .method = "GET",
+                .version = "1.1",
+                .hostname = "",
+                .scheme = "",
+                .path = "/hello_world~",
+            });
+    }
+}
+
+TEST_CASE("Request parsing bad requests", "[http_parser]")
+{
+    Http::RequestParser parser {};
+    parser.init();
+
+    SECTION("bad HTTP version")
+    {
+        std::string recv_buf1 { "GET /hel" };
+        std::string recv_buf2 { "lo_world HTTP/1.12.3\r\n\r\n" };
+        auto status { parser.parse_request(recv_buf1.data(), recv_buf1.size(), 0) };
+        REQUIRE(status == Http::RequestParsingStatus::NeedMoreData);
+        status = parser.parse_request(recv_buf2.data(), recv_buf2.size(), 0);
+        REQUIRE(status == Http::RequestParsingStatus::Error);
+    }
+
+    SECTION("very incomplete status line")
+    {
+        std::string recv_buf { "GET /helll\r\n\r\n" };
+        auto status { parser.parse_request(recv_buf.data(), recv_buf.size(), 0) };
+        REQUIRE(status == Http::RequestParsingStatus::Error);
+    }
+
+    SECTION("partial_buf overflow results in error")
+    {
+        std::string buf1 { "GET /" };
+        auto buf2 = std::string(Http::PARSER_MAX_PARTIAL_BUF_LEN, 'a');
+        std::string buf3 { " HTTP/1.1\r\n\r\n" };
+
+        auto status { parser.parse_request(buf1.data(), buf1.size(), 0) };
+        REQUIRE(status == Http::RequestParsingStatus::NeedMoreData);
+
+        status = parser.parse_request(buf2.data(), buf2.size(), 0);
+        REQUIRE(status == Http::RequestParsingStatus::Error);
+    }
+}
+
+Http::Headers make_headers(std::vector<std::pair<std::string, std::string>> headers)
+{
+    Http::Headers h {};
+    for (auto& [field, value] : headers) {
+        h.set(field, value);
+    }
+    return h;
+}
+
+TEST_CASE("Headers parsing", "[http_parser]")
+{
+    std::string bad_request { "GET / HTTP/1.1\r\nx-weird: part" };
+    bad_request += '\x05';
+    bad_request += "end\r\n\r\n";
+    std::vector<std::tuple<std::string, std::string, Http::Headers, Http::RequestParsingStatus>> data {
+        { "standard headers",
+            "GET / HTTP/1.1\r\nHost: example.com\r\nContent-Type:      text/plain\r\n\r\n",
+            make_headers({ { "Host", "example.com" }, { "Content-Type", "text/plain" } }),
+            Http::RequestParsingStatus::Finished },
+        { "empty header value",
+            "GET / HTTP/1.1\r\nHost: \r\nContent-Type: text/plain  \r\n\r\n",
+            make_headers({ { "Host", "" }, { "Content-Type", "text/plain" } }),
+            Http::RequestParsingStatus::Finished },
+        { "multiple header values",
+            "GET / HTTP/1.1\r\nx-weird: a space c\r\nx-weird: b    \r\n\r\n",
+            make_headers({ { "X-Weird", "a space c" }, { "X-Weird", "b" } }),
+            Http::RequestParsingStatus::Finished },
+        { "control chars in a headers",
+            bad_request,
+            make_headers({}),
+            Http::RequestParsingStatus::Error }
+    };
+
+    Http::RequestParser parser {};
+    parser.init();
+
+    for (auto& [name, request, headers, expected_status] : data) {
+        SECTION(name)
+        {
+            auto status { parser.parse_request(request.data(), request.size(), 0) };
+            REQUIRE(status == expected_status);
+            REQUIRE(parser.result.headers == headers);
+        }
+    }
+}
+
+TEST_CASE("Too many headers", "[http_parser][too_many_headers]")
+{
+    std::string request { "GET / HTTP/1.1\r\n" };
+    for (int i { 0 }; i < 102; i++) {
+        request.append(std::format("X{}: v{}\r\n", i, i));
+    }
+    request.append("\r\n");
+    Http::RequestParser parser {};
+    parser.init();
+    auto status { parser.parse_request(request.data(), request.size(), 0) };
+    REQUIRE(status == Http::RequestParsingStatus::Error);
+}
+
+TEST_CASE("Chunked headers parsing", "[http_parser]")
+{
+    auto request_line { "GET / HTTP/1.1\r\n" };
+    std::vector<std::pair<std::vector<std::string>, Http::Headers>> data {
+        { { request_line, "Content-T", "ype: ", "plain/", "html\r\n\r\n" }, make_headers({ { "Content-Type", "plain/html" } }) },
+        { { request_line, "Content-T", "ype: ", "plain/", "html\r\nHost: e.com", "\r\n\r\n" }, make_headers({ { "Content-Type", "plain/html" }, { "Host", "e.com" } }) }
+    };
+
+    Http::RequestParser parser {};
+    parser.init();
+
+    for (auto& [chunks, headers] : data) {
+        SECTION(str_vector_join(chunks, ""))
+        {
+            auto status { Http::RequestParsingStatus::Error };
+            for (auto& chunk : chunks) {
+                status = parser.parse_request(chunk.data(), chunk.size(), 0);
+                REQUIRE(status != Http::RequestParsingStatus::Error);
+            }
+            REQUIRE(status == Http::RequestParsingStatus::Finished);
+            REQUIRE(parser.result.headers == headers);
+        }
+    }
+}
+
+TEST_CASE("Multiple requests in a buffer", "[http_parser]")
+{
+    std::string buffer { "GET / HTTP/1.1\r\n\r\nGET /favicon.ico HTTP/1.1\r\n\r\nPOST" };
+    Http::RequestParser parser {};
+    parser.init();
+    auto status { parser.parse_request(buffer.data(), buffer.size(), 0) };
+    REQUIRE(status == Http::RequestParsingStatus::Finished);
+    REQUIRE(parser.bytes_read == 18);
+
+    auto offset { parser.bytes_read };
+    parser.init();
+    status = parser.parse_request(buffer.data(), buffer.size(), offset);
+    REQUIRE(status == Http::RequestParsingStatus::Finished);
+    REQUIRE(parser.bytes_read == 47);
+    REQUIRE(parser.result.uri.path == "/favicon.ico");
+
+    offset = parser.bytes_read;
+    parser.init();
+    status = parser.parse_request(buffer.data(), buffer.size(), offset);
+    REQUIRE(status == Http::RequestParsingStatus::NeedMoreData);
 }

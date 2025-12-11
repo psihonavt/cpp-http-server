@@ -1,5 +1,5 @@
 #include "response.h"
-#include "config/server.h"
+#include "config.h"
 #include "errors.h"
 #include "utils/helpers.h"
 #include "utils/logging.h"
@@ -11,7 +11,6 @@
 #include <optional>
 #include <ranges>
 #include <stdexcept>
-#include <string_view>
 #include <sys/socket.h>
 #include <system_error>
 #include <utility>
@@ -40,7 +39,7 @@ response_write_result ResponseWriter::write_headers()
     }
 
     auto headers_size { calculate_headers_size() };
-    if (headers_size > Config::Server::HEADERS_LIMIT_SIZE) {
+    if (headers_size > MAX_HEADERS_LEN) {
         return make_error_code(Error::response_writer_headers_too_big);
     }
 
