@@ -19,7 +19,7 @@ class Response:
     reason: str
     version: str = "1.1"
 
-    def comapare_to_str_repr(self, repr: str) -> bool:
+    def compare_to_str_repr(self, repr: str) -> bool:
         status_line = "HTTP/{} {} {}".format(
             self.version, self.status_code, self.reason
         )
@@ -35,7 +35,7 @@ def buffer_has_responses(
     for repr in reprs:
         for m_and_r in result:
             if not m_and_r[0]:
-                m_and_r[0] = m_and_r[1].comapare_to_str_repr(split_w + repr)
+                m_and_r[0] = m_and_r[1].compare_to_str_repr(split_w + repr)
     return all([matched for matched, _ in result])
 
 

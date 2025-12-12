@@ -19,12 +19,14 @@ def send_and_expect(
             chunk = s.recv(8192)
         except BlockingIOError:
             attempts -= 1
-            sleep(0.01)
+            sleep(0.1)
             continue
 
         if len(chunk):
             resp += chunk
             if buffer_has_responses(resp, expected):
                 return True
+        else:
+            return buffer_has_responses(resp, expected)
 
     return False
