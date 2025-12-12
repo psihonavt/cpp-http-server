@@ -6,7 +6,9 @@ namespace Server {
 
 class IRequestHandler {
 public:
-    virtual Http::Response handle_request(Http::Request const& request) const;
+    virtual Http::Response handle_request(Http::Request const& request) const = 0;
+
+    virtual ~IRequestHandler() { }
 };
 
 class StaticRootHandler : public IRequestHandler {
@@ -14,7 +16,7 @@ private:
     std::filesystem::path m_root;
 
 public:
-    StaticRootHandler(std::string const& static_root)
+    StaticRootHandler(std::filesystem::path const& static_root)
         : m_root { static_root }
     {
     }

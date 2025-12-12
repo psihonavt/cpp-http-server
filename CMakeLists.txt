@@ -50,6 +50,7 @@ add_library(utils STATIC
   src/http/mime.cpp
   src/server/server.cpp
   src/server/signals.cpp
+  src/server/handlers.cpp
 )
 target_include_directories(utils PUBLIC ${CMAKE_SOURCE_DIR}/src)
 
@@ -84,6 +85,7 @@ add_executable(unit_tests
   tests/unit/http/test_headers.cpp
   tests/unit/http/test_mime.cpp
   tests/unit/http/test_urls.cpp
+  tests/unit/server/test_server.cpp
   tests/unit/main.cpp
 )
 

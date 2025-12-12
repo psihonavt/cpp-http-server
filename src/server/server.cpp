@@ -1,33 +1,15 @@
 #include "server.h"
 #include "config.h"
 #include "globals.h"
+#include "http/request.h"
+#include "http/response.h"
 #include "signals.h"
-#include "utils/helpers.h"
 #include "utils/logging.h"
 #include <fcntl.h>
 
 namespace Server {
 
-Http::Response HttpServer::handle_http_request(Http::Request const& req)
-{
-    if (req.method != "GET") {
-        return Http::Response(Http::StatusCode::BAD_REQUEST);
-    } else {
-        auto maybe_file = serve_file(url_decode(req.uri.path), m_server_root);
-        if (!maybe_file.is_success) {
-            LOG_ERROR("Error serving {}: {}", req.uri.path, maybe_file.error);
-            if (maybe_file.error_code != std::errc::no_such_file_or_directory) {
-                return Http::Response(Http::StatusCode::INTERNAL_SERVER_ERROR, maybe_file.error, "text/plain");
-            } else {
-                return Http::Response(Http::StatusCode::NOT_FOUND, "Not Found", "text/plain");
-            }
-        } else {
-            return Http::Response(Http::StatusCode::OK, maybe_file);
-        }
-    }
-}
-
-HttpServer start_server(int port, std::filesystem::path const& server_root)
+HttpServer create_server(int port)
 {
     addrinfo hints {};
     addrinfo* servinfo;
@@ -85,7 +67,7 @@ HttpServer start_server(int port, std::filesystem::path const& server_root)
     freeaddrinfo(servinfo);
 
     LOG_INFO("Listening on {}[{}]: {}", hostname, ip, port);
-    return HttpServer(*server_socket, server_root);
+    return HttpServer(*server_socket);
 }
 
 std::optional<PfdsChange> HttpServer::establish_connection()
@@ -128,8 +110,8 @@ std::optional<PfdsChange> HttpServer::handle_recv_events(int sender_fd)
     } else {
         LOG_INFO("[{}][s:{}] read {} requests", connection.connection_id, sender_fd, connection.request_reader.requests().size());
         for (auto& request : connection.request_reader.requests()) {
-            LOG_INFO("[{}][s:{}] Got HTTP request: {}a {}", connection.connection_id, sender_fd, request.method, request.uri.path);
-            auto response = handle_http_request(request);
+            LOG_INFO("[{}][s:{}] Got HTTP request: {} {}", connection.connection_id, sender_fd, request.method, request.uri.path);
+            auto response = handle_request(request);
             connection.responses_queue.push_back(std::move(response));
         }
         connection.clear_pending_requests();
@@ -215,6 +197,21 @@ void HttpServer::serve()
 
         process_connections();
     }
+}
+
+void HttpServer::mount_handler(std::string const& path, IRequestHandler& handler)
+{
+    m_handlers.emplace(path, handler);
+}
+
+Http::Response HttpServer::handle_request(Http::Request const& request)
+{
+    for (auto const& [path, handler] : m_handlers) {
+        if (request.uri.path.starts_with(path)) {
+            return handler.get().handle_request(request);
+        }
+    }
+    return Http::Response(Http::StatusCode::NOT_FOUND);
 }
 
 }

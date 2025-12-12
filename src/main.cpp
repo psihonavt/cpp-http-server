@@ -6,6 +6,8 @@
 #include "utils/logging.h"
 #include <cassert>
 #include <cstdlib>
+#include <filesystem>
+#include <optional>
 
 int main(int argc, char** argv)
 {
@@ -26,7 +28,14 @@ int main(int argc, char** argv)
     assert(Server::Globals::s_signal_pipe_rfd != -1 && "read signal pipe must be initialized.");
 
     LOG_INFO("Starting the server ...");
-    auto server { Server::start_server(port, server_root) };
+    auto server { Server::create_server(port) };
+
+    std::optional<Server::StaticRootHandler> sr_handler;
+    if (!server_root.empty()) {
+        sr_handler = Server::StaticRootHandler(server_root);
+        server.mount_handler("/", *sr_handler);
+        LOG_INFO("Serving files from \"{}\" on \"{}\"", server_root.string(), "/");
+    }
     server.serve();
 
     return 0;
