@@ -73,17 +73,30 @@ public:
     }
 };
 
-struct ServerContext {
-    Socket const& server;
-    std::filesystem::path const& server_root;
-    std::unordered_map<int, Connection> connections;
-    PfdsHolder pfds;
+class HttpServer {
+private:
+    Socket m_socket;
+    std::filesystem::path m_server_root;
+    std::unordered_map<int, Connection> m_connections;
+    PfdsHolder m_pfds;
+    std::optional<PfdsChange> establish_connection();
+    std::optional<PfdsChange> handle_recv_events(int sender_fd);
+    std::optional<PfdsChange> handle_send_events(int receiver_fd);
+    void process_connections();
+
+public:
+    HttpServer(Socket& socket, std::filesystem::path const& server_root)
+        : m_socket { std::move(socket) }
+        , m_server_root { server_root }
+        , m_connections {}
+        , m_pfds {}
+    {
+    }
+
+    Http::Response handle_http_request(Http::Request const& req);
+    void serve();
 };
 
-Http::Response handle_http_request(Http::Request const& req, std::filesystem::path const& server_root);
-Socket start_server(int port);
-std::optional<PfdsChange> establish_connection(ServerContext& ctx);
-std::optional<PfdsChange> handle_recv_events(ServerContext& ctx, int sender_fd);
-std::optional<PfdsChange> handle_send_events(ServerContext& ctx, int receiver_fd);
-void process_connections(ServerContext& ctx);
+HttpServer start_server(int port, std::filesystem::path const& server_root);
+
 }

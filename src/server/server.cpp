@@ -8,12 +8,12 @@
 
 namespace Server {
 
-Http::Response handle_http_request(Http::Request const& req, std::filesystem::path const& server_root)
+Http::Response HttpServer::handle_http_request(Http::Request const& req)
 {
     if (req.method != "GET") {
         return Http::Response(Http::StatusCode::BAD_REQUEST);
     } else {
-        auto maybe_file = serve_file(url_decode(req.uri.path), server_root);
+        auto maybe_file = serve_file(url_decode(req.uri.path), m_server_root);
         if (!maybe_file.is_success) {
             LOG_ERROR("Error serving {}: {}", req.uri.path, maybe_file.error);
             if (maybe_file.error_code != std::errc::no_such_file_or_directory) {
@@ -27,7 +27,7 @@ Http::Response handle_http_request(Http::Request const& req, std::filesystem::pa
     }
 }
 
-Socket start_server(int port)
+HttpServer start_server(int port, std::filesystem::path const& server_root)
 {
     addrinfo hints {};
     addrinfo* servinfo;
@@ -85,14 +85,14 @@ Socket start_server(int port)
     freeaddrinfo(servinfo);
 
     LOG_INFO("Listening on {}[{}]: {}", hostname, ip, port);
-    return std::move(*server_socket);
+    return HttpServer(*server_socket, server_root);
 }
 
-std::optional<PfdsChange> establish_connection(ServerContext& ctx)
+std::optional<PfdsChange> HttpServer::establish_connection()
 {
     sockaddr_storage their_address;
     socklen_t their_addr_len { sizeof(their_address) };
-    Socket client_socket { accept(ctx.server, reinterpret_cast<sockaddr*>(&their_address), &their_addr_len) };
+    Socket client_socket { accept(m_socket, reinterpret_cast<sockaddr*>(&their_address), &their_addr_len) };
 
     if (client_socket == -1) {
         if (errno == EINTR || errno == ECONNABORTED) {
@@ -108,28 +108,28 @@ std::optional<PfdsChange> establish_connection(ServerContext& ctx)
     }
 
     int client_fd { client_socket.fd() };
-    ctx.connections.emplace(client_fd, client_socket);
-    LOG_INFO("[{}][s:{}] connection established", ctx.connections.at(client_fd).connection_id, client_fd);
+    m_connections.emplace(client_fd, client_socket);
+    LOG_INFO("[{}][s:{}] connection established", m_connections.at(client_fd).connection_id, client_fd);
     return PfdsChange { .fd = client_fd, .action = PfdsChangeAction::Add, .events = (POLLHUP | POLLIN) };
 }
 
-std::optional<PfdsChange> handle_recv_events(ServerContext& ctx, int sender_fd)
+std::optional<PfdsChange> HttpServer::handle_recv_events(int sender_fd)
 {
-    if (!ctx.connections.contains(sender_fd)) {
+    if (!m_connections.contains(sender_fd)) {
         LOG_ERROR("No connection found for socket {}!", sender_fd);
         return {};
     }
-    auto& connection { ctx.connections.at(sender_fd) };
+    auto& connection { m_connections.at(sender_fd) };
 
     if (!connection.read_pending_requests()) {
         LOG_DEBUG("[{}][s:{}] failed to read requests", connection.connection_id, sender_fd);
-        ctx.connections.erase(sender_fd);
+        m_connections.erase(sender_fd);
         return PfdsChange { .fd = sender_fd, .action = PfdsChangeAction::Remove };
     } else {
         LOG_INFO("[{}][s:{}] read {} requests", connection.connection_id, sender_fd, connection.request_reader.requests().size());
         for (auto& request : connection.request_reader.requests()) {
             LOG_INFO("[{}][s:{}] Got HTTP request: {}a {}", connection.connection_id, sender_fd, request.method, request.uri.path);
-            auto response = handle_http_request(request, ctx.server_root);
+            auto response = handle_http_request(request);
             connection.responses_queue.push_back(std::move(response));
         }
         connection.clear_pending_requests();
@@ -142,14 +142,14 @@ std::optional<PfdsChange> handle_recv_events(ServerContext& ctx, int sender_fd)
     }
 }
 
-std::optional<PfdsChange> handle_send_events(ServerContext& ctx, int receiver_fd)
+std::optional<PfdsChange> HttpServer::handle_send_events(int receiver_fd)
 {
-    if (!ctx.connections.contains(receiver_fd)) {
+    if (!m_connections.contains(receiver_fd)) {
         LOG_ERROR("No connection found for socket {}!", receiver_fd);
         return {};
     }
 
-    auto& connection { ctx.connections.at(receiver_fd) };
+    auto& connection { m_connections.at(receiver_fd) };
 
     if (connection.responses_queue.empty() && !connection.cur_response_writer) {
         LOG_WARN("socket {} got POLLOUT but there is nothing to send ...", receiver_fd);
@@ -159,7 +159,7 @@ std::optional<PfdsChange> handle_send_events(ServerContext& ctx, int receiver_fd
     if (connection.is_sending()) {
         bool is_success = connection.send_pending();
         if (!is_success) {
-            ctx.connections.erase(receiver_fd);
+            m_connections.erase(receiver_fd);
             return PfdsChange { .fd = receiver_fd, .action = PfdsChangeAction::Remove };
         }
 
@@ -172,29 +172,48 @@ std::optional<PfdsChange> handle_send_events(ServerContext& ctx, int receiver_fd
     return {};
 }
 
-void process_connections(ServerContext& ctx)
+void HttpServer::process_connections()
 {
     std::vector<std::optional<PfdsChange>> changes {};
-    changes.reserve(ctx.pfds.all().size() / 2);
-    for (auto const& pfd : ctx.pfds.all()) {
+    changes.reserve(m_pfds.all().size() / 2);
+    for (auto const& pfd : m_pfds.all()) {
         if (pfd.revents & (POLLIN | POLLHUP)) {
-            if (pfd.fd == ctx.server) {
-                changes.push_back(establish_connection(ctx));
+            if (pfd.fd == m_socket) {
+                changes.push_back(establish_connection());
             } else if (pfd.fd == Globals::s_signal_pipe_rfd) {
                 handle_signal_event();
             } else {
-                changes.push_back(handle_recv_events(ctx, pfd.fd));
+                changes.push_back(handle_recv_events(pfd.fd));
             }
         }
         if (pfd.revents & POLLOUT) {
-            changes.push_back(handle_send_events(ctx, pfd.fd));
+            changes.push_back(handle_send_events(pfd.fd));
         }
     }
 
     for (auto const& pfd_change : changes) {
         if (pfd_change) {
-            ctx.pfds.handle_change(*pfd_change);
+            m_pfds.handle_change(*pfd_change);
         }
+    }
+}
+
+void HttpServer::serve()
+{
+
+    m_pfds.handle_change(PfdsChange { .fd = m_socket, .action = PfdsChangeAction::Add, .events = POLLIN });
+    m_pfds.handle_change(PfdsChange { .fd = Server::Globals::s_signal_pipe_rfd, .action = PfdsChangeAction::Add, .events = POLLIN });
+
+    while (true) {
+        int poll_count { m_pfds.do_poll() };
+        if (poll_count == -1) {
+            LOG_ERROR("Polling failed: {}", strerror(errno));
+            // maybe there is something in our signal pipe, read and display it
+            handle_signal_event();
+            std::exit(1);
+        }
+
+        process_connections();
     }
 }
 
