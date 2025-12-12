@@ -18,6 +18,8 @@ std::map<std::string, std::string> const known_mime_types {
     { "html", "text/html" },
     { "txt", "text/plain" },
     { "css", "text/css" },
+    { "pdf", "application/pdf" },
+    { "md", "text/markdown" },
 
 };
 

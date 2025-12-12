@@ -75,24 +75,24 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(Catch2)
 
-add_executable(tests
-  tests/utils/test_llist.cpp
-  tests/utils/test_helpers.cpp
-  tests/http/test_response.cpp
-  tests/http/test_http_parser.cpp
-  tests/http/test_req_reader.cpp
-  tests/http/test_headers.cpp
-  tests/http/test_mime.cpp
-  tests/http/test_urls.cpp
-  tests/main.cpp
+add_executable(unit_tests
+  tests/unit/utils/test_llist.cpp
+  tests/unit/utils/test_helpers.cpp
+  tests/unit/http/test_response.cpp
+  tests/unit/http/test_http_parser.cpp
+  tests/unit/http/test_req_reader.cpp
+  tests/unit/http/test_headers.cpp
+  tests/unit/http/test_mime.cpp
+  tests/unit/http/test_urls.cpp
+  tests/unit/main.cpp
 )
 
-target_compile_options(tests PRIVATE ${MY_COMPILE_FLAGS} ${MY_SANITIZING_FLAGS})
-target_link_options(tests PRIVATE ${MY_SANITIZING_FLAGS})
-target_link_libraries(tests PRIVATE utils Catch2::Catch2)
+target_compile_options(unit_tests PRIVATE ${MY_COMPILE_FLAGS} ${MY_SANITIZING_FLAGS})
+target_link_options(unit_tests PRIVATE ${MY_SANITIZING_FLAGS})
+target_link_libraries(unit_tests PRIVATE utils Catch2::Catch2)
 
 include(CTest)
 include(Catch)
 enable_testing()
-catch_discover_tests(tests)
+catch_discover_tests(unit_tests)
 
