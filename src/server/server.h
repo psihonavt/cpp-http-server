@@ -4,6 +4,7 @@
 #include "http/response.h"
 #include "utils/logging.h"
 #include "utils/net.h"
+#include <deque>
 
 namespace Server {
 
@@ -12,7 +13,7 @@ public:
     Socket client;
     long long connection_id;
 
-    std::vector<Http::Response> responses_queue;
+    std::deque<Http::Response> responses_queue;
     std::optional<Http::ResponseWriter> cur_response_writer;
     Http::RequestReader request_reader;
 
@@ -44,8 +45,8 @@ public:
         }
 
         if (!cur_response_writer) {
-            cur_response_writer.emplace(std::move(responses_queue.back()), client);
-            responses_queue.pop_back();
+            cur_response_writer.emplace(std::move(responses_queue.front()), client);
+            responses_queue.pop_front();
         }
 
         auto maybe_erorr { cur_response_writer->write() };

@@ -3,13 +3,14 @@
 #include "globals.h"
 #include "signals.h"
 #include "utils/helpers.h"
+#include "utils/logging.h"
 #include <fcntl.h>
 
 namespace Server {
 
 Http::Response handle_http_request(Http::Request const& req, std::filesystem::path const& server_root)
 {
-    if (req.method == "") {
+    if (req.method != "GET") {
         return Http::Response(Http::StatusCode::BAD_REQUEST);
     } else {
         auto maybe_file = serve_file(url_decode(req.uri.path), server_root);
@@ -121,12 +122,13 @@ std::optional<PfdsChange> handle_recv_events(ServerContext& ctx, int sender_fd)
     auto& connection { ctx.connections.at(sender_fd) };
 
     if (!connection.read_pending_requests()) {
+        LOG_DEBUG("[{}][s:{}] failed to read requests", connection.connection_id, sender_fd);
         ctx.connections.erase(sender_fd);
         return PfdsChange { .fd = sender_fd, .action = PfdsChangeAction::Remove };
     } else {
         LOG_INFO("[{}][s:{}] read {} requests", connection.connection_id, sender_fd, connection.request_reader.requests().size());
         for (auto& request : connection.request_reader.requests()) {
-            LOG_INFO("[{}][s:{}] received a HTTP request: {}", connection.connection_id, sender_fd, request.uri.path);
+            LOG_INFO("[{}][s:{}] Got HTTP request: {}a {}", connection.connection_id, sender_fd, request.method, request.uri.path);
             auto response = handle_http_request(request, ctx.server_root);
             connection.responses_queue.push_back(std::move(response));
         }

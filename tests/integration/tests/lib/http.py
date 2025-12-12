@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 
-@dataclass
+@dataclass(frozen=True)
 class Request:
     method: str
     path: str
@@ -13,7 +13,7 @@ class Request:
         return request
 
 
-@dataclass
+@dataclass(frozen=True)
 class Response:
     status_code: str
     reason: str
@@ -27,16 +27,28 @@ class Response:
 
 
 def buffer_has_responses(
-    buffer: bytes, responses: list[Response], version: str = "1.1"
+    buffer: bytes,
+    responses: list[Response],
+    version: str = "1.1",
+    check_responses_ordered=True,
 ) -> bool:
-    result = [[False, r] for r in responses]
+    result: dict[Response, None | int] = {r: None for r in responses}
     split_w = "HTTP/{}".format(version)
-    reprs = buffer.decode().split(split_w)
+    reprs = buffer.decode().split(split_w)[1:]
     for repr in reprs:
-        for m_and_r in result:
-            if not m_and_r[0]:
-                m_and_r[0] = m_and_r[1].compare_to_str_repr(split_w + repr)
-    return all([matched for matched, _ in result])
+        for resp in result:
+            if result[resp] is None:
+                result[resp] = (
+                    reprs.index(repr)
+                    if resp.compare_to_str_repr(split_w + repr)
+                    else None
+                )
+    all_matched = all(v is not None for v in result.values())
+    if not check_responses_ordered:
+        same_order = True
+    else:
+        same_order = list(range(len(responses))) == [result[resp] for resp in responses]
+    return all_matched and same_order
 
 
 def encode_requests(requests: list[Request]) -> bytes:

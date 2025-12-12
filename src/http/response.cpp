@@ -26,6 +26,7 @@ response_write_result ResponseWriter::write_status_line()
 
     if (!m_cur_buff) {
         m_cur_buff = std::format("HTTP/{} {} {}\r\n", m_response.version, static_cast<int>(m_response.status), STATUS_CODE_REASON[m_response.status]);
+        LOG_DEBUG("[s:{}] Writing {}", m_recipient.fd(), m_cur_buff->data());
         m_cur_buff_sent = 0;
     }
     return write_current_buffer(Status::WRITING_HEADERS);
