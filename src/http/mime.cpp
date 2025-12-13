@@ -1,13 +1,13 @@
 #include "mime.h"
 #include "utils/helpers.h"
 #include <cctype>
-#include <map>
 #include <ranges>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
-std::map<std::string, std::string> const known_mime_types {
+std::unordered_map<std::string, std::string> const known_mime_types {
     { "png", "image/png" },
     { "jpg", "image/jpg" },
     { "jpeg", "image/jpeg" },
@@ -20,6 +20,8 @@ std::map<std::string, std::string> const known_mime_types {
     { "css", "text/css" },
     { "pdf", "application/pdf" },
     { "md", "text/markdown" },
+    { "mp4", "video/mp4" },
+    { "mpeg", "video/mpeg" },
 
 };
 
