@@ -9,6 +9,7 @@
 #include <deque>
 #include <functional>
 #include <unordered_map>
+#include <utility>
 
 namespace Server {
 
@@ -17,13 +18,13 @@ public:
     Socket client;
     long long connection_id;
 
-    std::deque<Http::Response> responses_queue;
+    std::deque<std::pair<Http::Request, Http::Response>> req_resp_queue;
     std::optional<Http::ResponseWriter> cur_response_writer;
     Http::RequestReader request_reader;
 
     Connection(Socket& cl)
         : client { std::move(cl) }
-        , responses_queue {}
+        , req_resp_queue {}
         , cur_response_writer { std::nullopt }
         , request_reader {}
     {
@@ -35,7 +36,7 @@ public:
         if (cur_response_writer && !cur_response_writer->is_done()) {
             return true;
         }
-        if (!responses_queue.empty()) {
+        if (!req_resp_queue.empty()) {
             return true;
         }
         return false;
@@ -49,8 +50,9 @@ public:
         }
 
         if (!cur_response_writer) {
-            cur_response_writer.emplace(std::move(responses_queue.front()), client);
-            responses_queue.pop_front();
+            auto& [request, response] { req_resp_queue.front() };
+            cur_response_writer.emplace(std::move(response), client, request.headers);
+            req_resp_queue.pop_front();
         }
 
         auto maybe_erorr { cur_response_writer->write() };
@@ -88,6 +90,7 @@ private:
     std::optional<PfdsChange> handle_recv_events(int sender_fd);
     std::optional<PfdsChange> handle_send_events(int receiver_fd);
     void process_connections();
+    void set_server_headers(Http::Response& response);
 
 public:
     HttpServer(Socket& socket)

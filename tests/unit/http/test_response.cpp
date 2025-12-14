@@ -6,6 +6,7 @@
 #include "utils/net.h"
 #include <cstddef>
 #include <cstring>
+#include <format>
 #include <ios>
 #include <memory>
 #include <optional>
@@ -14,7 +15,9 @@
 #include <sys/fcntl.h>
 #include <sys/poll.h>
 #include <sys/socket.h>
+#include <tuple>
 #include <utility>
+#include <vector>
 
 std::string fdread(int fd)
 {
@@ -40,7 +43,7 @@ void ensure_write_error(Http::ResponseWriter& w, Http::Error expected_error)
     REQUIRE(writing_error);
 }
 
-TEST_CASE("Testing HTTP response writer")
+TEST_CASE("Writing HTTP responses", "[http_response_writer]")
 {
     int fds[2];
     REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0);
@@ -142,5 +145,64 @@ TEST_CASE("Testing HTTP response writer")
 
         Http::ResponseWriter w { std::move(response), sender };
         ensure_write_error(w, Http::Error::response_writer_bad_stream);
+    }
+}
+
+TEST_CASE("Writing ranged HTTP responses", "[http_response_writer],[ranged]")
+{
+    int fds[2];
+    REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0);
+
+    Socket sender { fds[0] };
+    Socket receiver { fds[1] };
+
+    Http::Headers req_headers {};
+    std::string content { "a test string" };
+    std::string status_206 { "HTTP/1.1 206 Partial Content" };
+    std::string status_416 { "HTTP/1.1 416 Range Not Satisfiable" };
+    auto response = Http::Response(Http::StatusCode::OK, content, "plain/text");
+    response.headers.set(Http::Headers::ACCEPT_RANGES_HEADER_NAME, Http::ContentRange::RANGE_UNIT);
+
+    std::vector<std::tuple<std::string, std::string, std::string, std::string, std::string, int>> fixtures {
+        { "Simple range", status_206, "bytes=2-5", "\r\n\r\ntest", "bytes 2-5/13", 4 },
+        { "Unbound lower range", status_206, "bytes=-5", "\r\n\r\na test", "bytes 0-5/13", 6 },
+        { "Unbound upper range", status_206, "bytes=7-", "\r\n\r\nstring", "bytes 7-12/13", 6 },
+        { "The enire range", status_206, "bytes=0-12", std::format("\r\n\r\n{}", content), "bytes 0-12/13", 13 },
+        { "Upper range over limit", status_206, "bytes=0-999", std::format("\r\n\r\n{}", content), "bytes 0-12/13", 13 },
+        { "Upper range over limit 2", status_206, "bytes=12-999", "g", "bytes 12-12/13", 1 },
+    };
+
+    for (auto& [name,
+             expected_status, range_header,
+             expected_content, expected_range_header,
+             expected_content_length] : fixtures) {
+
+        SECTION(name)
+        {
+            req_headers.set(Http::Headers::RANGE_HEADER_NAME, range_header);
+            Http::ResponseWriter w { std::move(response), sender, req_headers };
+
+            while (!w.is_done()) {
+                REQUIRE(w.write() == std::nullopt);
+            }
+            auto client_data = fdread(receiver);
+            REQUIRE(client_data.starts_with(expected_status));
+            REQUIRE(client_data.find(expected_content) != std::string::npos);
+            REQUIRE(client_data.find(std::format("\r\nContent-Length: {}\r\n", expected_content_length)) != std::string::npos);
+            REQUIRE(client_data.find(std::format("\r\nContent-Range: {}\r\n", expected_range_header)) != std::string::npos);
+        }
+    }
+
+    SECTION("Range not satisfiable")
+    {
+        req_headers.set(Http::Headers::RANGE_HEADER_NAME, "bytes=31-45");
+        Http::ResponseWriter w { std::move(response), sender, req_headers };
+
+        while (!w.is_done()) {
+            REQUIRE(w.write() == std::nullopt);
+        }
+        auto client_data = fdread(receiver);
+        REQUIRE(client_data.starts_with(status_416));
+        REQUIRE(client_data.find("\r\nContent-Range: bytes */13\r\n") != std::string::npos);
     }
 }

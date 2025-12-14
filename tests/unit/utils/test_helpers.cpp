@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-TEST_CASE("Testing helper functions")
+TEST_CASE("Testing helper functions", "[utils]")
 {
     REQUIRE(str_tolower("Tom and Jerry") == "tom and jerry");
     std::string const sc { "Const" };
@@ -24,7 +24,7 @@ TEST_CASE("Testing helper functions")
     REQUIRE(str_vector_join(v) == "a, b");
 }
 
-TEST_CASE("Test string trimming")
+TEST_CASE("Test string trimming", "[utils]")
 {
     std::string a;
     a = "abc";
@@ -41,4 +41,20 @@ TEST_CASE("Test string trimming")
 
     a = " ";
     REQUIRE(str_trim(a) == "");
+}
+
+TEST_CASE("Test string splitting", "[utils]")
+{
+    CHECK(str_split("a b c") == std::vector<std::string> { "a", "b", "c" });
+    CHECK(str_split("a b ") == std::vector<std::string> { "a", "b", "" });
+    CHECK(str_split("a  b c", "  ") == std::vector<std::string> { "a", "b c" });
+    CHECK(str_split("a  b c", " ") == std::vector<std::string> { "a", "", "b", "c" });
+    CHECK(str_split(" a b ", " ") == std::vector<std::string> { "", "a", "b", "" });
+    CHECK(str_split("", " ") == std::vector<std::string> { "" });
+    CHECK(str_split("bytes=", "bytes=") == std::vector<std::string> { "", "" });
+    CHECK(str_split("bytes=a", "bytes=") == std::vector<std::string> { "", "a" });
+    CHECK(str_split("1-2", "-") == std::vector<std::string> { "1", "2" });
+    CHECK(str_split("-2", "-") == std::vector<std::string> { "", "2" });
+    CHECK(str_split("1-", "-") == std::vector<std::string> { "1", "" });
+    CHECK(str_split("-", "-") == std::vector<std::string> { "", "" });
 }

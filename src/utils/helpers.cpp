@@ -1,6 +1,7 @@
 #include "utils/helpers.h"
 #include <algorithm>
 #include <charconv>
+#include <iostream>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -29,7 +30,7 @@ std::optional<int> str_toint(std::string_view s)
     return {};
 }
 
-std::string& str_trim(std::string& s, char const* t)
+std::string& str_trim(std::string& s, std::string const& t)
 {
     s.erase(0, s.find_first_not_of(t));
     s.erase(s.find_last_not_of(t) + 1);
@@ -47,37 +48,21 @@ std::string str_vector_join(std::vector<std::string> const& v, std::string_view 
     return oss.str();
 }
 
-int hext_to_int(char c)
+std::vector<std::string> str_split(std::string const& s, std::string const& delim)
 {
-    if (c >= '0' && c <= '9') {
-        return c - '0';
-    }
-    if (c >= 'a' && c <= 'f') {
-        return c - 'a' + 10;
-    }
-    if (c >= 'A' && c <= 'F') {
-        return c - 'A' + 10;
-    }
+    std::vector<std::string> tokens;
+    std::string::size_type pos { 0 };
+    std::string::size_type start { 0 };
 
-    return -1;
-}
-
-std::string url_decode(std::string_view encoded)
-{
-    std::string decoded {};
-    for (size_t idx { 0 }; idx < encoded.size(); idx++) {
-        if (encoded[idx] == '%' and idx + 2 < encoded.size()) {
-            int low { hext_to_int(encoded[idx + 2]) };
-            int high { hext_to_int(encoded[idx + 1]) };
-            if (low != -1 && high != -1) {
-                decoded += static_cast<char>((high << 4) | low);
-                idx += 2;
-            } else {
-                decoded += '%';
-            }
-        } else {
-            decoded += encoded[idx];
-        }
+    while (((pos = s.find(delim, pos)) != std::string::npos)) {
+        tokens.emplace_back(s.substr(start, pos - start));
+        start = pos + delim.size();
+        pos = start;
     }
-    return decoded;
+    if (start < s.size()) {
+        tokens.emplace_back(s.substr(start, s.size() - start));
+    } else if (start == s.size()) {
+        tokens.emplace_back("");
+    }
+    return tokens;
 }

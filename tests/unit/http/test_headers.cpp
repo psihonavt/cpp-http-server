@@ -30,3 +30,50 @@ TEST_CASE("HTTP Headers comparison", "[http_headers]")
     REQUIRE(h1 == h2);
     REQUIRE(h1 != h3);
 }
+
+TEST_CASE("Range header", "[http_headers]")
+{
+    Http::Headers h {};
+
+    std::vector<std::tuple<std::string, bool, Http::ContentRange>> fixtues {
+        { "a-b", false, {} },
+        { "-", false, {} },
+        { "tomatoes=1-2", false, {} },
+        { "bytes=1-2", true, { 1, 2 } },
+        { "bytes=-2", true, { Http::ContentRange::UNBOUND_RANGE, 2 } },
+        { "bytes=1-", true, { 1, Http::ContentRange::UNBOUND_RANGE } },
+        { "bytes=2-1", false, {} },
+        { "bytes=2-2", false, {} },
+    };
+
+    for (auto& [value, is_valid, range] : fixtues) {
+        SECTION(value)
+        {
+            h.set(Http::Headers::RANGE_HEADER_NAME, value);
+            REQUIRE(h.has_valid_range() == is_valid);
+            if (is_valid) {
+                REQUIRE(h.get_range() == range);
+            }
+        }
+    }
+}
+
+TEST_CASE("Range header repr", "[http_headers]")
+{
+    Http::Headers h {};
+
+    std::vector<std::tuple<Http::ContentRange, size_t, std::string>> fixtues {
+        { Http::NOT_SATISFIABLE_RANGE, 10, "bytes */10" },
+        { { Http::ContentRange::UNBOUND_RANGE, 8 }, 10, "bytes -8/10" },
+        { { 2, Http::ContentRange::UNBOUND_RANGE }, 10, "bytes 2-/10" },
+        { { 2, 6 }, 10, "bytes 2-6/10" },
+    };
+
+    for (auto& [range, length, expected] : fixtues) {
+        SECTION(expected)
+        {
+            h.set_content_range(length, range);
+            REQUIRE(h.get(Http::Headers::CONTENT_RANGE_HEADER_NAME)[0] == expected);
+        }
+    }
+}
