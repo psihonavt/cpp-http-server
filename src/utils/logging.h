@@ -67,6 +67,22 @@ public:
         }
     }
 
+    void log(LogLevel level, std::source_location loc, std::string const& msg)
+    {
+        if (level < min_level_) {
+            return;
+        }
+
+        auto now = std::chrono::system_clock::now();
+        std::string tstamp = std::format("{:%Y-%m-%d %H:%M:%S}", now);
+        std::string loc_filename { loc.file_name() };
+        std::string log_msg = std::format("[{}|{}|{}:{}] {}", Logger::log_level_as_string(level), tstamp,
+            std::filesystem::path(loc_filename).filename().string(), loc.line(), msg);
+        for (auto const& sink : sinks_) {
+            *sink << log_msg << std::endl;
+        }
+    }
+
 private:
     static std::string log_level_as_string(LogLevel level)
     {

@@ -12,6 +12,7 @@
 #include <optional>
 #include <ranges>
 #include <stdexcept>
+#include <string>
 #include <sys/socket.h>
 #include <system_error>
 #include <utility>
@@ -23,7 +24,10 @@ StatusCode ResponseWriter::get_adjusted_status()
     if (m_response.headers.has(Headers::ACCEPT_RANGES_HEADER_NAME)) {
         auto maybe_range = m_request_headers.get_range();
         if (maybe_range) {
-            if (is_range_within_body(*maybe_range)) {
+            if ((maybe_range = adjust_range_to_body(*maybe_range)); maybe_range) {
+                m_content_range = maybe_range;
+                m_response.headers.set_content_range(m_response.body->length, *m_content_range);
+                m_response.headers.override(Headers::CONTENT_LENGTH_HEADER_NAME, std::to_string(maybe_range->upper - maybe_range->lower + 1));
                 return StatusCode::PARTIAL_CONTENT;
             } else {
                 return StatusCode::RANGE_NOT_SATISFIABLE;
@@ -45,25 +49,33 @@ void ResponseWriter::adjust_response()
     }
 }
 
-bool ResponseWriter::is_range_within_body(ContentRange const& range)
+std::optional<ContentRange> ResponseWriter::adjust_range_to_body(ContentRange const& range)
 {
     if (!m_response.body) {
-        return false;
+        return std::nullopt;
     }
 
+    ContentRange adjusted_range {};
     if (range.lower != ContentRange::UNBOUND_RANGE) {
         if (static_cast<size_t>(range.lower) > m_response.body->length - 1) {
-            return false;
+            return std::nullopt;
         }
+        adjusted_range.lower = range.lower;
+    } else {
+        adjusted_range.lower = 0;
     }
 
     if (range.upper != ContentRange::UNBOUND_RANGE) {
         if (static_cast<size_t>(range.upper) > m_response.body->length - 1) {
-            return false;
+            adjusted_range.upper = static_cast<int>(m_response.body->length - 1);
+        } else {
+            adjusted_range.upper = range.upper;
         }
+    } else {
+        adjusted_range.upper = static_cast<int>(m_response.body->length - 1);
     }
 
-    return true;
+    return adjusted_range;
 }
 
 response_write_result ResponseWriter::write_status_line()
@@ -137,24 +149,31 @@ response_write_result ResponseWriter::write_body()
         return std::nullopt;
     }
 
-    int sndbuf_size;
-    socklen_t optlen = sizeof(sndbuf_size);
-    getsockopt(m_recipient.fd(), SOL_SOCKET, SO_SNDBUF, &sndbuf_size, &optlen);
-    LOG_DEBUG("Socket {} send buffer: {} bytes", m_recipient.fd(), sndbuf_size);
+    size_t body_bytes_to_read;
+    auto& content { m_response.body->content };
 
-    size_t chunk_size { std::min(static_cast<size_t>(1024 * 1024), m_response.body->unread_bytes()) };
+    if (m_content_range) {
+        body_bytes_to_read = static_cast<size_t>(m_content_range->upper + 1);
+    } else {
+        body_bytes_to_read = m_response.body->length;
+    }
+
+    size_t chunk_size { std::min(static_cast<size_t>(1024 * 1024), m_response.body->unread_bytes(body_bytes_to_read)) };
 
     // first allocation for a body chunk
     if (!m_body_buff) {
         m_body_buff = std::make_unique<char[]>(chunk_size);
         m_body_buff_sent = 0;
         m_body_buff_size = 0;
+        if (m_content_range) {
+
+            content->seekg(m_content_range->lower);
+        }
     }
 
     // if current chunk is done sending, read the next chunk from the body's content
-    auto& content { m_response.body->content };
     if (m_body_buff_sent == m_body_buff_size) {
-        chunk_size = std::min(chunk_size, m_response.body->unread_bytes());
+        chunk_size = std::min(chunk_size, m_response.body->unread_bytes(body_bytes_to_read));
         content->read(m_body_buff.get(), static_cast<std::streamsize>(chunk_size));
         if (content->bad()) {
             return Error::response_writer_bad_stream;
@@ -170,7 +189,7 @@ response_write_result ResponseWriter::write_body()
         return std::nullopt;
     }
 
-    LOG_DEBUG("{} Attempting to send ... {}", m_recipient.fd(), m_body_buff_size - m_body_buff_sent);
+    LOG_DEBUG("[s:{}] Attempting to send ... {}", m_recipient.fd(), m_body_buff_size - m_body_buff_sent);
     ssize_t sent = send(m_recipient.fd(), m_body_buff.get() + m_body_buff_sent, m_body_buff_size - m_body_buff_sent, 0);
     if (sent < 0) {
         if (errno == EWOULDBLOCK || errno == EAGAIN) {
@@ -181,7 +200,7 @@ response_write_result ResponseWriter::write_body()
         }
     }
     m_body_buff_sent += static_cast<size_t>(sent);
-    LOG_DEBUG("{} bytes sent ... {}", m_recipient.fd(), sent);
+    LOG_DEBUG("[s:{}] bytes sent ... {}", m_recipient.fd(), sent);
     return std::nullopt;
 }
 

@@ -47,9 +47,9 @@ struct ResponseBody {
     {
     }
 
-    size_t unread_bytes() const
+    size_t unread_bytes(size_t bytes_to_read) const
     {
-        return length - static_cast<size_t>(content->tellg());
+        return bytes_to_read - static_cast<size_t>(content->tellg());
     }
 };
 
@@ -130,6 +130,7 @@ public:
         , m_body_buff { nullptr }
         , m_body_buff_size { 0 }
         , m_body_buff_sent { 0 }
+        , m_content_range { std::nullopt }
     {
     }
 
@@ -150,7 +151,7 @@ private:
 
     StatusCode get_adjusted_status();
     void adjust_response();
-    bool is_range_within_body(ContentRange const& range);
+    std::optional<ContentRange> adjust_range_to_body(ContentRange const& range);
     response_write_result write_status_line();
     response_write_result write_headers();
     response_write_result write_current_buffer(Status set_on_finish);
@@ -170,6 +171,8 @@ private:
     std::unique_ptr<char[]> m_body_buff;
     size_t m_body_buff_size;
     size_t m_body_buff_sent;
+
+    std::optional<ContentRange> m_content_range;
 };
 
 };
