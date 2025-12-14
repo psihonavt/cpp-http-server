@@ -48,6 +48,7 @@ add_library(utils STATIC
   src/http/headers.cpp
   src/http/response.cpp
   src/http/mime.cpp
+  src/http/utils.cpp
   src/server/server.cpp
   src/server/signals.cpp
   src/server/handlers.cpp

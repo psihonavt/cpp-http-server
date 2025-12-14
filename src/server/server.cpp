@@ -3,6 +3,7 @@
 #include "globals.h"
 #include "http/request.h"
 #include "http/response.h"
+#include "http/utils.h"
 #include "signals.h"
 #include "utils/logging.h"
 #include <fcntl.h>
@@ -112,11 +113,11 @@ std::optional<PfdsChange> HttpServer::handle_recv_events(int sender_fd)
         for (auto& request : connection.request_reader.requests()) {
             LOG_INFO("[{}][s:{}] Got HTTP request: {} {}", connection.connection_id, sender_fd, request.method, request.uri.path);
             auto response = handle_request(request);
-            connection.responses_queue.push_back(std::move(response));
+            connection.req_resp_queue.push_back({ std::move(request), std::move(response) });
         }
         connection.clear_pending_requests();
 
-        if (connection.responses_queue.empty()) {
+        if (connection.req_resp_queue.empty()) {
             return {};
         } else {
             return PfdsChange { .fd = sender_fd, .action = PfdsChangeAction::AddEvents, .events = POLLOUT };
@@ -133,7 +134,7 @@ std::optional<PfdsChange> HttpServer::handle_send_events(int receiver_fd)
 
     auto& connection { m_connections.at(receiver_fd) };
 
-    if (connection.responses_queue.empty() && !connection.cur_response_writer) {
+    if (connection.req_resp_queue.empty() && !connection.cur_response_writer) {
         LOG_WARN("socket {} got POLLOUT but there is nothing to send ...", receiver_fd);
         return {};
     }
@@ -206,12 +207,21 @@ void HttpServer::mount_handler(std::string const& path, IRequestHandler& handler
 
 Http::Response HttpServer::handle_request(Http::Request const& request)
 {
+    auto response = Http::Response(Http::StatusCode::NOT_FOUND);
     for (auto const& [path, handler] : m_handlers) {
         if (request.uri.path.starts_with(path)) {
-            return handler.get().handle_request(request);
+            response = handler.get().handle_request(request);
+            break;
         }
     }
-    return Http::Response(Http::StatusCode::NOT_FOUND);
+    set_server_headers(response);
+    return response;
+}
+
+void HttpServer::set_server_headers(Http::Response& response)
+{
+    response.headers.set("Server", SERVERN_NAME);
+    response.headers.set("Date", Http::Utils::get_current_date());
 }
 
 }

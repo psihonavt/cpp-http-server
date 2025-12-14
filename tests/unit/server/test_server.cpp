@@ -60,3 +60,18 @@ TEST_CASE("Requests rounting", "[http_server]")
         REQUIRE(expected_content == handler.get_content(req));
     }
 }
+
+TEST_CASE("Server headers", "[http_server]")
+
+{
+    auto [server, client] { make_server() };
+
+    SECTION("It always includes Server and Date headers")
+    {
+        auto req { make_request("/a/b/c") };
+        auto resp { server.handle_request(req) };
+        REQUIRE(resp.status == Http::StatusCode::NOT_FOUND);
+        REQUIRE(resp.headers.has("Server"));
+        REQUIRE(resp.headers.has("Date"));
+    }
+}

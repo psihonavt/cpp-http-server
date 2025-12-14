@@ -1,6 +1,7 @@
 #include "response.h"
 #include "config.h"
 #include "errors.h"
+#include "http/headers.h"
 #include "utils/helpers.h"
 #include "utils/logging.h"
 #include <cerrno>
@@ -17,6 +18,54 @@
 
 namespace Http {
 
+StatusCode ResponseWriter::get_adjusted_status()
+{
+    if (m_response.headers.has(Headers::ACCEPT_RANGES_HEADER_NAME)) {
+        auto maybe_range = m_request_headers.get_range();
+        if (maybe_range) {
+            if (is_range_within_body(*maybe_range)) {
+                return StatusCode::PARTIAL_CONTENT;
+            } else {
+                return StatusCode::RANGE_NOT_SATISFIABLE;
+            }
+        }
+    }
+    return m_response.status;
+}
+
+void ResponseWriter::adjust_response()
+{
+    auto new_status = get_adjusted_status();
+    if (m_response.status != new_status) {
+        m_response.status = new_status;
+        if (m_response.body && new_status == StatusCode::RANGE_NOT_SATISFIABLE) {
+            m_response.headers.set_content_range(m_response.body->length, NOT_SATISFIABLE_RANGE);
+            m_response.body = std::nullopt;
+        }
+    }
+}
+
+bool ResponseWriter::is_range_within_body(ContentRange const& range)
+{
+    if (!m_response.body) {
+        return false;
+    }
+
+    if (range.lower != ContentRange::UNBOUND_RANGE) {
+        if (static_cast<size_t>(range.lower) > m_response.body->length - 1) {
+            return false;
+        }
+    }
+
+    if (range.upper != ContentRange::UNBOUND_RANGE) {
+        if (static_cast<size_t>(range.upper) > m_response.body->length - 1) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 response_write_result ResponseWriter::write_status_line()
 
 {
@@ -25,6 +74,7 @@ response_write_result ResponseWriter::write_status_line()
     }
 
     if (!m_cur_buff) {
+        adjust_response();
         m_cur_buff = std::format("HTTP/{} {} {}\r\n", m_response.version, static_cast<int>(m_response.status), STATUS_CODE_REASON[m_response.status]);
         LOG_DEBUG("[s:{}] Writing {}", m_recipient.fd(), m_cur_buff->data());
         m_cur_buff_sent = 0;

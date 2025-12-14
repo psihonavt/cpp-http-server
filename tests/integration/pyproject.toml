@@ -8,5 +8,6 @@ dependencies = [
     "ipdb>=0.13.13",
     "ipython>=9.8.0",
     "pytest>=9.0.2",
+    "rangehttpserver>=1.4.0",
     "requests>=2.32.5",
 ]

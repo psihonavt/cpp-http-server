@@ -1,4 +1,4 @@
-#include "utils/helpers.h"
+#include "http/utils.h"
 #include <catch2/catch_test_macros.hpp>
 #include <map>
 #include <string>
@@ -13,6 +13,6 @@ TEST_CASE("URL decoding", "[url-decode]")
     };
 
     for (auto [encoded, expected] : fixtures) {
-        CHECK(expected == url_decode(encoded));
+        CHECK(expected == Http::Utils::url_decode(encoded));
     }
 }

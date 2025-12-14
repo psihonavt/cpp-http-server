@@ -8,7 +8,6 @@ def send_and_expect(
     port: int, requests: list[Request], expected: list[Response], attempts: int = 10
 ):
     s = socket.create_connection(("::1", port))
-    print("after the connection was established")
     try:
         s.setblocking(False)
         send_data = encode_requests(requests)

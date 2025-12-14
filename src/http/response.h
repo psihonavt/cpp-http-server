@@ -17,18 +17,22 @@ namespace Http {
 
 enum class StatusCode {
     OK = 200,
+    PARTIAL_CONTENT = 206,
     BAD_REQUEST = 400,
     NOT_FOUND = 404,
     METHOD_NOT_ALLOWED = 405,
+    RANGE_NOT_SATISFIABLE = 416,
     INTERNAL_SERVER_ERROR = 500,
 };
 
 inline std::map<StatusCode, std::string> STATUS_CODE_REASON {
     { StatusCode::OK, "OK" },
+    { StatusCode::PARTIAL_CONTENT, "Partial Content" },
 
     { StatusCode::BAD_REQUEST, "Bad Request" },
     { StatusCode::NOT_FOUND, "Not Found" },
     { StatusCode::METHOD_NOT_ALLOWED, "Method Not Allowed" },
+    { StatusCode::RANGE_NOT_SATISFIABLE, "Range Not Satisfiable" },
 
     { StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error" },
 };
@@ -86,6 +90,7 @@ struct Response {
         , status { s }
     {
         headers = get_default_headers(static_cast<int>(fr.file_size), fr.mime_type);
+        headers.set(Headers::ACCEPT_RANGES_HEADER_NAME, ContentRange::RANGE_UNIT);
         body = ResponseBody(std::move(fr.file), fr.file_size);
     }
 
@@ -101,15 +106,23 @@ struct Response {
     {
     }
 
-    Response& operator=(Response&&) = delete;
+    Response& operator=(Response&& r)
+    {
+        version = std::move(r.version);
+        status = r.status;
+        headers = std::move(r.headers);
+        body = std::move(r.body);
+        return *this;
+    }
 };
 
 using response_write_result = std::optional<std::error_code>;
 
 class ResponseWriter {
 public:
-    ResponseWriter(Response&& response, Socket const& recipient)
+    ResponseWriter(Response&& response, Socket const& recipient, Headers const& request_headers = {})
         : m_response { std::move(response) }
+        , m_request_headers { request_headers }
         , m_status { Status::WRITING_STATUS_LINE }
         , m_recipient { recipient }
         , m_cur_buff { std::nullopt }
@@ -135,6 +148,9 @@ private:
         WRITING_DONE,
     };
 
+    StatusCode get_adjusted_status();
+    void adjust_response();
+    bool is_range_within_body(ContentRange const& range);
     response_write_result write_status_line();
     response_write_result write_headers();
     response_write_result write_current_buffer(Status set_on_finish);
@@ -143,7 +159,8 @@ private:
     size_t calculate_headers_size();
     std::string& capitalize_header_field(std::string& field);
 
-    Response const m_response;
+    Response m_response;
+    Headers const m_request_headers;
     Status m_status;
     Socket const& m_recipient;
 
