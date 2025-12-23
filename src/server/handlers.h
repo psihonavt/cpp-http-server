@@ -1,12 +1,16 @@
 #include "http/request.h"
 #include "http/response.h"
+#include <cstdint>
 #include <filesystem>
+#include <optional>
 
 namespace Server {
 
 class IRequestHandler {
 public:
-    virtual Http::Response handle_request(Http::Request const& request) const = 0;
+    virtual std::optional<Http::Response> handle_request(
+        uint64_t request_id, Http::Request const& request) const
+        = 0;
 
     virtual ~IRequestHandler() { }
 };
@@ -21,7 +25,8 @@ public:
     {
     }
 
-    Http::Response handle_request(Http::Request const& request) const override;
+    std::optional<Http::Response> handle_request(
+        uint64_t request_id, Http::Request const& request) const override;
 };
 
 }

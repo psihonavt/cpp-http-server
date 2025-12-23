@@ -5,8 +5,14 @@
 #include "http/response.h"
 #include "http/utils.h"
 #include "signals.h"
+#include "utils/helpers.h"
 #include "utils/logging.h"
+#include "utils/net.h"
+#include <cstdint>
 #include <fcntl.h>
+#include <optional>
+#include <sys/poll.h>
+#include <utility>
 
 namespace Server {
 
@@ -82,10 +88,12 @@ std::optional<PfdsChange> HttpServer::establish_connection()
             return {};
         }
         LOG_ERROR("Failed to accept a connection: {}", strerror(errno));
+        return {};
     }
 
     int s_flags { fcntl(client_socket, F_GETFL) };
-    if (s_flags == -1 || fcntl(client_socket, F_SETFL, s_flags | O_NONBLOCK) != 0) {
+
+    if (s_flags == -1 || fcntl(client_socket, F_SETFL, s_flags | O_NONBLOCK) == -1) {
         LOG_ERROR("Failed to mark client socket as non-blocking: {}", strerror(errno));
         return {};
     }
@@ -112,15 +120,21 @@ std::optional<PfdsChange> HttpServer::handle_recv_events(int sender_fd)
         LOG_INFO("[{}][s:{}] read {} requests", connection.connection_id, sender_fd, connection.request_reader.requests().size());
         for (auto& request : connection.request_reader.requests()) {
             LOG_INFO("[{}][s:{}] Got HTTP request: {} {}", connection.connection_id, sender_fd, request.method, request.uri.path);
-            auto response = handle_request(request);
-            connection.req_resp_queue.push_back({ std::move(request), std::move(response) });
+            auto request_id = generate_id();
+            auto response = handle_request(request_id, request);
+            connection.req_resp_queue.push_back({ request_id, std::move(request), std::move(response) });
+            m_request_to_client_fd.emplace(request_id, connection.client.fd());
         }
         connection.clear_pending_requests();
 
         if (connection.req_resp_queue.empty()) {
             return {};
         } else {
-            return PfdsChange { .fd = sender_fd, .action = PfdsChangeAction::AddEvents, .events = POLLOUT };
+            if (std::get<2>(connection.req_resp_queue.front())) {
+                return PfdsChange { .fd = sender_fd, .action = PfdsChangeAction::AddEvents, .events = POLLOUT };
+            } else {
+                return {};
+            }
         }
     }
 }
@@ -181,22 +195,23 @@ void HttpServer::process_connections()
     }
 }
 
+void HttpServer::drive(int timeout_ms)
+{
+    int poll_count { m_pfds.do_poll(timeout_ms) };
+    if (poll_count == -1) {
+        LOG_ERROR("Polling failed: {}", strerror(errno));
+        // maybe there is something in our signal pipe, read and display it
+        handle_signal_event();
+        std::exit(1);
+    }
+
+    process_connections();
+}
+
 void HttpServer::serve()
 {
-
-    m_pfds.handle_change(PfdsChange { .fd = m_socket, .action = PfdsChangeAction::Add, .events = POLLIN });
-    m_pfds.handle_change(PfdsChange { .fd = Server::Globals::s_signal_pipe_rfd, .action = PfdsChangeAction::Add, .events = POLLIN });
-
     while (true) {
-        int poll_count { m_pfds.do_poll() };
-        if (poll_count == -1) {
-            LOG_ERROR("Polling failed: {}", strerror(errno));
-            // maybe there is something in our signal pipe, read and display it
-            handle_signal_event();
-            std::exit(1);
-        }
-
-        process_connections();
+        drive(-1);
     }
 }
 
@@ -205,16 +220,18 @@ void HttpServer::mount_handler(std::string const& path, IRequestHandler& handler
     m_handlers.emplace(path, handler);
 }
 
-Http::Response HttpServer::handle_request(Http::Request const& request)
+std::optional<Http::Response> HttpServer::handle_request(uint64_t request_id, Http::Request const& request)
 {
-    auto response = Http::Response(Http::StatusCode::NOT_FOUND);
+    std::optional<Http::Response> response = Http::Response(Http::StatusCode::NOT_FOUND);
     for (auto const& [path, handler] : m_handlers) {
         if (request.uri.path.starts_with(path)) {
-            response = handler.get().handle_request(request);
+            response = handler.get().handle_request(request_id, request);
             break;
         }
     }
-    set_server_headers(response);
+    if (response) {
+        set_server_headers(*response);
+    }
     return response;
 }
 
@@ -222,6 +239,32 @@ void HttpServer::set_server_headers(Http::Response& response)
 {
     response.headers.set("Server", SERVERN_NAME);
     response.headers.set("Date", Http::Utils::get_current_date());
+}
+
+void HttpServer::notify_response_ready(uint64_t request_id, Http::Response& response)
+{
+    LOG_INFO("A response to request {} is ready", request_id);
+    if (!m_request_to_client_fd.contains(request_id)) {
+        LOG_WARN("got notification about non-existing request {}", request_id);
+    } else {
+        auto const& client_fd { m_request_to_client_fd.at(request_id) };
+        if (!m_connections.contains(client_fd)) {
+            LOG_WARN("[s:{}] no action connection for request {}", client_fd, request_id);
+        } else {
+            for (auto& [req_id, request, resp] : m_connections.at(client_fd).req_resp_queue) {
+                if (req_id == request_id) {
+                    if (resp) {
+                        LOG_WARN("[s:{}] request {} already has a ready-to-send response", client_fd, request_id);
+                    } else {
+                        LOG_INFO("[s:{}] moving a read-to-send resposne for a request {}", client_fd, request_id);
+                        resp = std::move(response);
+                        m_pfds.handle_change(PfdsChange { client_fd, PfdsChangeAction::AddEvents, POLLOUT });
+                        return;
+                    }
+                }
+            }
+        }
+    }
 }
 
 }

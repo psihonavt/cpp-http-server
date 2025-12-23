@@ -1,11 +1,14 @@
 #pragma once
 
+#include "globals.h"
 #include "handlers.h"
 #include "http/req_reader.h"
 #include "http/request.h"
 #include "http/response.h"
+#include "utils/helpers.h"
 #include "utils/logging.h"
 #include "utils/net.h"
+#include <cstdint>
 #include <deque>
 #include <functional>
 #include <unordered_map>
@@ -16,9 +19,9 @@ namespace Server {
 class Connection {
 public:
     Socket client;
-    long long connection_id;
+    uint64_t connection_id;
 
-    std::deque<std::pair<Http::Request, Http::Response>> req_resp_queue;
+    std::deque<std::tuple<uint64_t, Http::Request, std::optional<Http::Response>>> req_resp_queue;
     std::optional<Http::ResponseWriter> cur_response_writer;
     Http::RequestReader request_reader;
 
@@ -28,7 +31,7 @@ public:
         , cur_response_writer { std::nullopt }
         , request_reader {}
     {
-        connection_id = std::chrono::system_clock::now().time_since_epoch().count();
+        connection_id = generate_id();
     }
 
     bool is_sending()
@@ -37,7 +40,9 @@ public:
             return true;
         }
         if (!req_resp_queue.empty()) {
-            return true;
+            if (std::get<2>(req_resp_queue.front())) {
+                return true;
+            }
         }
         return false;
     }
@@ -50,8 +55,12 @@ public:
         }
 
         if (!cur_response_writer) {
-            auto& [request, response] { req_resp_queue.front() };
-            cur_response_writer.emplace(std::move(response), client, request.headers);
+            auto& [request_id, request, response] { req_resp_queue.front() };
+            if (!response) {
+                LOG_ERROR("[{}][s:{}] Attempt to send not-yet-ready response", connection_id, client.fd());
+                return false;
+            }
+            cur_response_writer.emplace(std::move(*response), client, request.headers);
             req_resp_queue.pop_front();
         }
 
@@ -83,6 +92,7 @@ class HttpServer {
 private:
     Socket m_socket;
     std::unordered_map<int, Connection> m_connections;
+    std::unordered_map<uint64_t, int> m_request_to_client_fd;
     PfdsHolder m_pfds;
     std::unordered_map<std::string, std::reference_wrapper<IRequestHandler>> m_handlers;
 
@@ -96,14 +106,19 @@ public:
     HttpServer(Socket& socket)
         : m_socket { std::move(socket) }
         , m_connections {}
+        , m_request_to_client_fd {}
         , m_pfds {}
         , m_handlers {}
     {
+        m_pfds.handle_change(PfdsChange { .fd = m_socket, .action = PfdsChangeAction::Add, .events = POLLIN });
+        m_pfds.handle_change(PfdsChange { .fd = Globals::s_signal_pipe_rfd, .action = PfdsChangeAction::Add, .events = POLLIN });
     }
 
     void serve();
+    void drive(int timeout_ms);
     void mount_handler(std::string const& path, IRequestHandler& handler);
-    Http::Response handle_request(Http::Request const& request);
+    void notify_response_ready(uint64_t request_id, Http::Response& response);
+    std::optional<Http::Response> handle_request(uint64_t request_id, Http::Request const& request);
 };
 
 HttpServer create_server(int port);

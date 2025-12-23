@@ -52,6 +52,11 @@ void PfdsHolder::ensure_fd_exists([[maybe_unused]] int fd)
     assert(m_index_map.contains(fd) && std::format("{} descriptor doesn't exist", fd).c_str());
 }
 
+bool PfdsHolder::has_fd(int fd)
+{
+    return m_index_map.contains(fd);
+}
+
 void PfdsHolder::add_fd(int newfd, short events)
 {
     assert(!m_index_map.contains(newfd) && std::format("fd {} already exists", newfd).c_str());
@@ -77,6 +82,13 @@ void PfdsHolder::add_fd_events(int fd, short events)
     ensure_fd_exists(fd);
     auto& pfd { m_pfds[static_cast<size_t>(m_index_map.at(fd))] };
     pfd.events |= events;
+}
+
+void PfdsHolder::set_fd_events(int fd, short events)
+{
+    ensure_fd_exists(fd);
+    auto& pfd { m_pfds[static_cast<size_t>(m_index_map.at(fd))] };
+    pfd.events = events;
 }
 
 void PfdsHolder::remove_fd_events(int fd, short events)
@@ -110,6 +122,9 @@ void PfdsHolder::handle_change(PfdsChange const& change)
         return;
     case PfdsChangeAction::RemoveEvents:
         remove_fd_events(change.fd, change.events);
+        return;
+    case PfdsChangeAction::SetEvents:
+        set_fd_events(change.fd, change.events);
         return;
     default:
         assert(false && "unexpected action");

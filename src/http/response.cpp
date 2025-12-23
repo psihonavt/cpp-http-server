@@ -57,6 +57,7 @@ std::optional<ContentRange> ResponseWriter::adjust_range_to_body(ContentRange co
 
     ContentRange adjusted_range {};
     if (range.lower != ContentRange::UNBOUND_RANGE) {
+        LOG_INFO("lower bound: {}; size: {}", range.lower, m_response.body->length - 1);
         if (static_cast<size_t>(range.lower) > m_response.body->length - 1) {
             return std::nullopt;
         }

@@ -4,10 +4,12 @@
 #include "http/utils.h"
 #include "utils/files.h"
 #include "utils/logging.h"
+#include <cstdint>
 
 namespace Server {
 
-Http::Response StaticRootHandler::handle_request(Http::Request const& request) const
+std::optional<Http::Response> StaticRootHandler::handle_request(
+    uint64_t request_id, Http::Request const& request) const
 {
     if (request.method != "GET") {
         return Http::Response(Http::StatusCode::BAD_REQUEST);
@@ -15,7 +17,7 @@ Http::Response StaticRootHandler::handle_request(Http::Request const& request) c
 
     auto maybe_file = serve_file(Http::Utils::url_decode(request.uri.path), m_root);
     if (!maybe_file.is_success) {
-        LOG_ERROR("Error serving {}: {}", request.uri.path, maybe_file.error);
+        LOG_ERROR("Error serving [{}]{}: {}", request_id, request.uri.path, maybe_file.error);
         if (maybe_file.error_code != std::errc::no_such_file_or_directory) {
             return Http::Response(Http::StatusCode::INTERNAL_SERVER_ERROR, maybe_file.error, "text/plain");
         } else {

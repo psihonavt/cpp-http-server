@@ -63,7 +63,8 @@ enum class PfdsChangeAction {
     Add,
     Remove,
     AddEvents,
-    RemoveEvents
+    RemoveEvents,
+    SetEvents
 };
 
 struct PfdsChange {
@@ -79,10 +80,12 @@ class PfdsHolder {
     void add_fd(int newfd, short events);
     void remove_fd(int fd);
     void add_fd_events(int fd, short events);
+    void set_fd_events(int fd, short events);
     void remove_fd_events(int fd, short events);
 
 public:
     void handle_change(PfdsChange const& change);
     int do_poll(int timeout_ms = -1);
     std::vector<pollfd> const& all();
+    bool has_fd(int fd);
 };

@@ -75,7 +75,7 @@ struct Response {
     {
     }
 
-    Response(StatusCode s, std::string const& content, std::string const& content_type)
+    Response(StatusCode s, std::string const& content, std::string const& content_type = "plain/text")
         : version { "1.1" }
         , status { s }
     {

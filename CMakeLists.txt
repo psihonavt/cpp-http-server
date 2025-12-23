@@ -33,6 +33,8 @@ else()
   set(MY_SANITIZING_FLAGS)
 endif()
 
+find_package(CURL REQUIRED)
+
 add_executable(server
   src/main.cpp
 )
@@ -66,6 +68,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(cli11)
 
 target_link_libraries(server PRIVATE utils CLI11::CLI11)
+target_link_libraries(server PRIVATE CURL::libcurl)
 target_compile_options(server PRIVATE ${MY_COMPILE_FLAGS} ${MY_SANITIZING_FLAGS})
 target_link_options(server PRIVATE ${MY_SANITIZING_FLAGS})
 
@@ -87,12 +90,14 @@ add_executable(unit_tests
   tests/unit/http/test_mime.cpp
   tests/unit/http/test_urls.cpp
   tests/unit/server/test_server.cpp
+  tests/unit/misc/helpers.cpp
   tests/unit/main.cpp
 )
 
 target_compile_options(unit_tests PRIVATE ${MY_COMPILE_FLAGS} ${MY_SANITIZING_FLAGS})
 target_link_options(unit_tests PRIVATE ${MY_SANITIZING_FLAGS})
 target_link_libraries(unit_tests PRIVATE utils Catch2::Catch2)
+target_include_directories(unit_tests PRIVATE ${CMAKE_SOURCE_DIR}/tests/unit)
 
 include(CTest)
 include(Catch)

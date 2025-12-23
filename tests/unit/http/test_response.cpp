@@ -3,6 +3,7 @@
 #include "http/errors.h"
 #include "http/headers.h"
 #include "http/response.h"
+#include "misc/helpers.h"
 #include "utils/net.h"
 #include <cstddef>
 #include <cstring>
@@ -18,16 +19,6 @@
 #include <tuple>
 #include <utility>
 #include <vector>
-
-std::string fdread(int fd)
-{
-    char buff[8192];
-    std::string result;
-    ssize_t n = recv(fd, buff, 8192, 0);
-    // LOG_INFO("fdread: read {} bytes", n);
-    REQUIRE(n > 0);
-    return result.append(buff, static_cast<size_t>(n));
-}
 
 void ensure_write_error(Http::ResponseWriter& w, Http::Error expected_error)
 {
