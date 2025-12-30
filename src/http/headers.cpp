@@ -23,6 +23,11 @@ void Headers::set(std::string const& field, std::string const& value)
     headers[canonize_header_field(field)].emplace_back(value);
 }
 
+void Headers::unset(std::string const& field)
+{
+    headers.erase(canonize_header_field(field));
+}
+
 void Headers::set_content_range(size_t content_length, ContentRange const& range)
 {
     std::string range_repr;
@@ -37,7 +42,7 @@ void Headers::set_content_range(size_t content_length, ContentRange const& range
             range_repr += std::to_string(range.upper);
         }
     }
-    set(CONTENT_RANGE_HEADER_NAME, std::format("bytes {}/{}", range_repr, content_length));
+    override(CONTENT_RANGE_HEADER_NAME, std::format("bytes {}/{}", range_repr, content_length));
 }
 
 void Headers::override(std::string const& field, std::string const& value)

@@ -21,7 +21,7 @@ namespace Http {
 
 StatusCode ResponseWriter::get_adjusted_status()
 {
-    if (m_response.headers.has(Headers::ACCEPT_RANGES_HEADER_NAME)) {
+    if (m_response.status != StatusCode::PARTIAL_CONTENT && m_response.headers.has(Headers::ACCEPT_RANGES_HEADER_NAME)) {
         auto maybe_range = m_request_headers.get_range();
         if (maybe_range) {
             if ((maybe_range = adjust_range_to_body(*maybe_range)); maybe_range) {

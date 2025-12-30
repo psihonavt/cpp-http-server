@@ -8,10 +8,14 @@
 #include "utils/helpers.h"
 #include "utils/logging.h"
 #include "utils/net.h"
+#include <chrono>
 #include <cstdint>
+#include <curl/multi.h>
 #include <fcntl.h>
+#include <iostream>
 #include <optional>
 #include <sys/poll.h>
+#include <sys/signal.h>
 #include <utility>
 
 namespace Server {
@@ -101,7 +105,7 @@ std::optional<PfdsChange> HttpServer::establish_connection()
     int client_fd { client_socket.fd() };
     m_connections.emplace(client_fd, client_socket);
     LOG_INFO("[{}][s:{}] connection established", m_connections.at(client_fd).connection_id, client_fd);
-    return PfdsChange { .fd = client_fd, .action = PfdsChangeAction::Add, .events = (POLLHUP | POLLIN) };
+    return PfdsChange { .fd = client_fd, .action = PfdsChangeAction::Add, .events = (POLLHUP | POLLIN), .kind = FdKind::server };
 }
 
 std::optional<PfdsChange> HttpServer::handle_recv_events(int sender_fd)
@@ -169,30 +173,48 @@ std::optional<PfdsChange> HttpServer::handle_send_events(int receiver_fd)
     return {};
 }
 
-void HttpServer::process_connections()
+void HttpServer::process_connections(int poll_count)
 {
-    std::vector<std::optional<PfdsChange>> changes {};
-    changes.reserve(m_pfds.all().size() / 2);
-    for (auto const& pfd : m_pfds.all()) {
-        if (pfd.revents & (POLLIN | POLLHUP)) {
-            if (pfd.fd == m_socket) {
-                changes.push_back(establish_connection());
-            } else if (pfd.fd == Globals::s_signal_pipe_rfd) {
-                handle_signal_event();
+    if (poll_count > 0) {
+        std::vector<std::optional<PfdsChange>> changes {};
+        changes.reserve(m_pfds.all().size() / 2);
+        for (auto const& pfd : m_pfds.all()) {
+
+            if (m_pfds.is_marked_deleted(pfd.fd)) {
+                continue;
+            }
+
+            auto fd_kind = m_pfds.get_kind(pfd.fd);
+
+            if (fd_kind == FdKind::server) {
+                if (pfd.revents & (POLLIN | POLLHUP)) {
+                    if (pfd.fd == m_socket) {
+                        changes.push_back(establish_connection());
+                    } else if (pfd.fd == Globals::s_signal_pipe_rfd) {
+                        handle_signal_event();
+                    } else {
+                        changes.push_back(handle_recv_events(pfd.fd));
+                    }
+                }
+                if (pfd.revents & POLLOUT) {
+                    changes.push_back(handle_send_events(pfd.fd));
+                }
+            } else if (fd_kind == FdKind::requester) {
+                m_http_requester.drive(pfd.fd, pfd.revents);
             } else {
-                changes.push_back(handle_recv_events(pfd.fd));
+                LOG_WARN("socket {} has unexpected kind {}", pfd.fd, static_cast<int>(fd_kind));
             }
         }
-        if (pfd.revents & POLLOUT) {
-            changes.push_back(handle_send_events(pfd.fd));
-        }
-    }
 
-    for (auto const& pfd_change : changes) {
-        if (pfd_change) {
-            m_pfds.handle_change(*pfd_change);
+        for (auto const& pfd_change : changes) {
+            if (pfd_change) {
+                m_pfds.handle_change(*pfd_change);
+            }
         }
+    } else {
+        m_http_requester.drive(-1, 0);
     }
+    m_pfds.reset_mark_deleted();
 }
 
 void HttpServer::drive(int timeout_ms)
@@ -205,13 +227,50 @@ void HttpServer::drive(int timeout_ms)
         std::exit(1);
     }
 
-    process_connections();
+    process_connections(poll_count);
 }
 
-void HttpServer::serve()
+void HttpServer::disarm_due_timers()
 {
-    while (true) {
-        drive(-1);
+    auto now = std::chrono::system_clock::now();
+    while (!m_armed_timers.empty() && m_armed_timers.top() < now) {
+        m_armed_timers.pop();
+    }
+}
+
+void HttpServer::serve(ServeStrategy& strategy)
+{
+    bool immediate_run_requested { false };
+    while ((strategy.serve_infitine()) ? true : (strategy.drives_cap >= 0)) {
+        auto timeout_ms { immediate_run_requested ? 0 : strategy.default_poll_timeout };
+        auto armed_timers_count_before { m_armed_timers.size() };
+        std::chrono::time_point<std::chrono::system_clock> now;
+        if (!m_armed_timers.empty() and !immediate_run_requested) {
+            now = std::chrono::system_clock::now();
+            auto next_arm = m_armed_timers.top();
+            if (next_arm > now) {
+                timeout_ms = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(next_arm - now).count());
+                m_armed_timers.pop();
+            }
+        } else {
+            LOG_DEBUG("No armed timers or we were requested to poll immediately");
+        }
+        if (!strategy.serve_infitine()) {
+            strategy.used_timeouts.emplace_back(timeout_ms);
+        }
+        LOG_DEBUG("Drive timeout {} ms, cap: {}", timeout_ms, strategy.drives_cap);
+        drive(timeout_ms);
+        immediate_run_requested = false;
+        bool new_timers_armed { m_armed_timers.size() > armed_timers_count_before };
+        now = std::chrono::system_clock::now();
+        if (new_timers_armed && m_armed_timers.top() < now) {
+            LOG_DEBUG("A request to poll immediately");
+            immediate_run_requested = true;
+        }
+        if (!strategy.serve_infitine()) {
+            strategy.drives_cap -= 1;
+        }
+        disarm_due_timers();
     }
 }
 
@@ -257,6 +316,7 @@ void HttpServer::notify_response_ready(uint64_t request_id, Http::Response& resp
                         LOG_WARN("[s:{}] request {} already has a ready-to-send response", client_fd, request_id);
                     } else {
                         LOG_INFO("[s:{}] moving a read-to-send resposne for a request {}", client_fd, request_id);
+                        // set_server_headers(response);
                         resp = std::move(response);
                         m_pfds.handle_change(PfdsChange { client_fd, PfdsChangeAction::AddEvents, POLLOUT });
                         return;
@@ -265,6 +325,46 @@ void HttpServer::notify_response_ready(uint64_t request_id, Http::Response& resp
             }
         }
     }
+}
+
+size_t HttpServer::arm_polling_timer(long timeout_ms)
+{
+    LOG_DEBUG("Request for arming the timer for {} ms", timeout_ms);
+    namespace c = std::chrono;
+    auto arm_at = c::system_clock::now() + c::milliseconds(timeout_ms);
+    m_armed_timers.push(arm_at);
+    return 0;
+}
+
+int HttpServer::requester_socket_fn_cb(curl_socket_t s, int what)
+{
+    LOG_DEBUG("socket function for {}; events: {}", s, what);
+    if (what == CURL_POLL_REMOVE) {
+        if (m_pfds.has_fd(s)) {
+            LOG_DEBUG("Got CURL_POLL_REMOVE for the socket fd {}. Removing ...", s);
+            m_pfds.handle_change(PfdsChange { s, PfdsChangeAction::Remove });
+        } else {
+            LOG_WARN("Got CURL_POLL_REMOVE for an unregistered socket fd {}", s);
+        }
+        return 0;
+    }
+
+    short pevents = 0;
+    if (what & CURL_POLL_IN) {
+        pevents |= POLLIN;
+    }
+    if (what & CURL_POLL_OUT) {
+        pevents |= POLLOUT;
+    }
+    if (what & CURL_POLL_INOUT) {
+        pevents |= (POLLIN | POLLOUT);
+    }
+    if (!m_pfds.has_fd(s)) {
+        m_pfds.handle_change(PfdsChange { s, PfdsChangeAction::Add, pevents, FdKind::requester });
+    } else {
+        m_pfds.handle_change(PfdsChange { s, PfdsChangeAction::SetEvents, pevents });
+    }
+    return 0;
 }
 
 }

@@ -52,10 +52,12 @@ add_library(utils STATIC
   src/http/mime.cpp
   src/http/utils.cpp
   src/server/server.cpp
+  src/server/client.cpp
   src/server/signals.cpp
   src/server/handlers.cpp
 )
 target_include_directories(utils PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(utils PRIVATE CURL::libcurl)
 
 include(FetchContent)
 
@@ -68,7 +70,6 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(cli11)
 
 target_link_libraries(server PRIVATE utils CLI11::CLI11)
-target_link_libraries(server PRIVATE CURL::libcurl)
 target_compile_options(server PRIVATE ${MY_COMPILE_FLAGS} ${MY_SANITIZING_FLAGS})
 target_link_options(server PRIVATE ${MY_SANITIZING_FLAGS})
 

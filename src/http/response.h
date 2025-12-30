@@ -75,11 +75,21 @@ struct Response {
     {
     }
 
-    Response(StatusCode s, std::string const& content, std::string const& content_type = "plain/text")
+    Response(StatusCode s, std::string const& content, std::string const& content_type = "text/plain")
         : version { "1.1" }
         , status { s }
     {
         headers = get_default_headers(static_cast<int>(content.size()), content_type);
+        auto ss { std::make_unique<std::stringstream>() };
+        ss->str(content);
+        body = ResponseBody(std::move(ss), content.size());
+    }
+
+    Response(StatusCode s, std::string const& content, Headers& h)
+        : version { "1.1" }
+        , status { s }
+    {
+        headers = std::move(h);
         auto ss { std::make_unique<std::stringstream>() };
         ss->str(content);
         body = ResponseBody(std::move(ss), content.size());

@@ -57,44 +57,61 @@ bool PfdsHolder::has_fd(int fd)
     return m_index_map.contains(fd);
 }
 
-void PfdsHolder::add_fd(int newfd, short events)
+FdKind PfdsHolder::get_kind(int fd)
+{
+    return m_index_map.at(fd).second;
+}
+
+void PfdsHolder::add_fd(int newfd, short events, FdKind kind)
 {
     assert(!m_index_map.contains(newfd) && std::format("fd {} already exists", newfd).c_str());
     m_pfds.emplace_back(pollfd { .fd = newfd, .events = events, .revents = 0 });
-    m_index_map[newfd] = m_pfds.size() - 1;
+    m_index_map[newfd] = { m_pfds.size() - 1, kind };
 }
 
 void PfdsHolder::remove_fd(int fd)
 {
     ensure_fd_exists(fd);
-    auto idx { m_index_map.at(fd) };
+    auto [idx, kind] { m_index_map.at(fd) };
     auto last { m_pfds.size() - 1 };
     if (idx != last) {
+        auto pair = m_index_map[m_pfds[last].fd];
         m_pfds[idx] = std::move(m_pfds[last]);
-        m_index_map[m_pfds[idx].fd] = idx;
+        m_index_map[m_pfds[idx].fd] = { idx, pair.second };
     }
     m_pfds.pop_back();
     m_index_map.erase(fd);
+    m_marked_deleted_fds.emplace(fd);
+}
+
+bool PfdsHolder::is_marked_deleted(int fd)
+{
+    return m_marked_deleted_fds.contains(fd);
+}
+
+void PfdsHolder::reset_mark_deleted()
+{
+    m_marked_deleted_fds.clear();
 }
 
 void PfdsHolder::add_fd_events(int fd, short events)
 {
     ensure_fd_exists(fd);
-    auto& pfd { m_pfds[static_cast<size_t>(m_index_map.at(fd))] };
+    auto& pfd { m_pfds[static_cast<size_t>(m_index_map.at(fd).first)] };
     pfd.events |= events;
 }
 
 void PfdsHolder::set_fd_events(int fd, short events)
 {
     ensure_fd_exists(fd);
-    auto& pfd { m_pfds[static_cast<size_t>(m_index_map.at(fd))] };
+    auto& pfd { m_pfds[static_cast<size_t>(m_index_map.at(fd).first)] };
     pfd.events = events;
 }
 
 void PfdsHolder::remove_fd_events(int fd, short events)
 {
     ensure_fd_exists(fd);
-    auto& pfd { m_pfds[static_cast<size_t>(m_index_map.at(fd))] };
+    auto& pfd { m_pfds[static_cast<size_t>(m_index_map.at(fd).first)] };
     pfd.events &= ~events;
 }
 
@@ -112,7 +129,7 @@ void PfdsHolder::handle_change(PfdsChange const& change)
 {
     switch (change.action) {
     case PfdsChangeAction::Add:
-        add_fd(change.fd, change.events);
+        add_fd(change.fd, change.events, change.kind);
         return;
     case PfdsChangeAction::Remove:
         remove_fd(change.fd);

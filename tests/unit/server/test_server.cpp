@@ -74,9 +74,11 @@ public:
 class ResponseNotReadyHandler : public Server::IRequestHandler {
 public:
     mutable std::vector<uint64_t> request_ids;
+    mutable Server::server_response_ready_cb ready_cb;
 
-    ResponseNotReadyHandler()
+    ResponseNotReadyHandler(Server::server_response_ready_cb cb)
         : request_ids {}
+        , ready_cb { cb }
     {
     }
 
@@ -86,6 +88,11 @@ public:
     {
         request_ids.push_back(request_id);
         return {};
+    }
+
+    void response_ready(uint64_t request_id, Http::Response& response)
+    {
+        ready_cb(request_id, response);
     }
 };
 
@@ -148,7 +155,7 @@ TEST_CASE("It returns 404 Not Found without handlers mounted", "[http_server]")
 TEST_CASE("It handles not-yet-ready responses", "[http_server]")
 {
     auto [server, client] { make_server_and_connect_client() };
-    ResponseNotReadyHandler handler {};
+    ResponseNotReadyHandler handler { server.get_response_ready_cb() };
     server.mount_handler("/a", handler);
 
     fdsend(client.fd(), "GET /a/1 HTTP/1.1\r\n\r\n");
@@ -168,7 +175,7 @@ TEST_CASE("It handles not-yet-ready responses", "[http_server]")
     }
 
     auto response2 { Http::Response(Http::StatusCode::OK, "response2") };
-    server.notify_response_ready(handler.request_ids[1], response2);
+    handler.response_ready(handler.request_ids[1], response2);
 
     // the first response is still not ready;
     // the server won't return the second "ready-to-send" response while the first one is still pending
@@ -180,7 +187,7 @@ TEST_CASE("It handles not-yet-ready responses", "[http_server]")
     }
 
     auto response1 { Http::Response(Http::StatusCode::OK, "response1") };
-    server.notify_response_ready(handler.request_ids[0], response1);
+    handler.response_ready(handler.request_ids[0], response1);
 
     std::string server_response {};
     attempts = 10;
@@ -194,4 +201,17 @@ TEST_CASE("It handles not-yet-ready responses", "[http_server]")
     auto resp1_pos { server_response.find("response1") };
     auto resp2_pos { server_response.find("response2") };
     REQUIRE(resp2_pos > resp1_pos);
+}
+
+TEST_CASE("It respects armed timers", "[http_server][polling]")
+{
+    auto [server, client] { make_server_and_connect_client() };
+    auto strategy { Server::ServeStrategy { {}, 2, 0 } };
+    server.arm_polling_timer(50);
+    server.arm_polling_timer(60);
+    server.serve(strategy);
+    REQUIRE(strategy.used_timeouts.size() == 3);
+    REQUIRE((strategy.used_timeouts[0] > 40 && strategy.used_timeouts[0] <= 50));
+    REQUIRE((strategy.used_timeouts[1] > 0 && strategy.used_timeouts[1] <= 10));
+    REQUIRE(strategy.used_timeouts[2] == 0);
 }

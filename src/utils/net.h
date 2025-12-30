@@ -1,7 +1,9 @@
 #pragma once
 
+#include <cstddef>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <set>
 #include <string>
 #include <sys/poll.h>
 #include <sys/socket.h>
@@ -67,17 +69,24 @@ enum class PfdsChangeAction {
     SetEvents
 };
 
+enum class FdKind {
+    server,
+    requester
+};
+
 struct PfdsChange {
     int fd;
     PfdsChangeAction action;
     short events {};
+    FdKind kind { FdKind::server };
 };
 
 class PfdsHolder {
     std::vector<pollfd> m_pfds {};
-    std::unordered_map<int, size_t> m_index_map {};
+    std::unordered_map<int, std::pair<size_t, FdKind>> m_index_map {};
+    std::set<int> m_marked_deleted_fds;
     void ensure_fd_exists(int fd);
-    void add_fd(int newfd, short events);
+    void add_fd(int newfd, short events, FdKind kind);
     void remove_fd(int fd);
     void add_fd_events(int fd, short events);
     void set_fd_events(int fd, short events);
@@ -88,4 +97,7 @@ public:
     int do_poll(int timeout_ms = -1);
     std::vector<pollfd> const& all();
     bool has_fd(int fd);
+    FdKind get_kind(int fd);
+    bool is_marked_deleted(int fd);
+    void reset_mark_deleted();
 };

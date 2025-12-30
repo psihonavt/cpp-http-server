@@ -1,5 +1,7 @@
 #pragma once
 
+#include "client.h"
+#include "commons.h"
 #include "globals.h"
 #include "handlers.h"
 #include "http/req_reader.h"
@@ -9,10 +11,15 @@
 #include "utils/logging.h"
 #include "utils/net.h"
 #include <cstdint>
+#include <curl/curl.h>
 #include <deque>
 #include <functional>
+#include <limits>
+#include <queue>
+#include <stdexcept>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace Server {
 
@@ -88,6 +95,24 @@ public:
     }
 };
 
+struct ServeStrategy {
+    static int const INFINITE_CAP = std::numeric_limits<int>::max();
+
+    std::vector<int> used_timeouts;
+    int drives_cap;
+    int default_poll_timeout;
+
+    bool serve_infitine() const
+    {
+        return drives_cap == INFINITE_CAP;
+    }
+
+    static ServeStrategy make_infinite_strategy()
+    {
+        return ServeStrategy { {}, INFINITE_CAP, -1 };
+    }
+};
+
 class HttpServer {
 private:
     Socket m_socket;
@@ -95,12 +120,18 @@ private:
     std::unordered_map<uint64_t, int> m_request_to_client_fd;
     PfdsHolder m_pfds;
     std::unordered_map<std::string, std::reference_wrapper<IRequestHandler>> m_handlers;
+    HttpClient::Requester m_http_requester;
+
+    std::priority_queue<time_point, std::vector<time_point>, std::greater<time_point>> m_armed_timers {};
 
     std::optional<PfdsChange> establish_connection();
     std::optional<PfdsChange> handle_recv_events(int sender_fd);
     std::optional<PfdsChange> handle_send_events(int receiver_fd);
-    void process_connections();
+    void process_connections(int poll_count);
     void set_server_headers(Http::Response& response);
+    void disarm_due_timers();
+    int requester_socket_fn_cb(curl_socket_t s, int what);
+    void notify_response_ready(uint64_t request_id, Http::Response& response);
 
 public:
     HttpServer(Socket& socket)
@@ -109,16 +140,38 @@ public:
         , m_request_to_client_fd {}
         , m_pfds {}
         , m_handlers {}
+        , m_http_requester {}
     {
         m_pfds.handle_change(PfdsChange { .fd = m_socket, .action = PfdsChangeAction::Add, .events = POLLIN });
         m_pfds.handle_change(PfdsChange { .fd = Globals::s_signal_pipe_rfd, .action = PfdsChangeAction::Add, .events = POLLIN });
+        auto socket_fn = [this](curl_socket_t s, int what) { return this->requester_socket_fn_cb(s, what); };
+        auto arm_timer_fn = [this](long timeout_ms) { return this->arm_polling_timer(timeout_ms); };
+        m_http_requester.initialize(socket_fn, arm_timer_fn);
+
+        if (!m_http_requester.is_initialized()) {
+            throw std::runtime_error("error initializing the HTTP requester.");
+        }
     }
 
-    void serve();
+    size_t arm_polling_timer(long timeout_ms);
+
+    void serve(ServeStrategy& strategy);
     void drive(int timeout_ms);
     void mount_handler(std::string const& path, IRequestHandler& handler);
-    void notify_response_ready(uint64_t request_id, Http::Response& response);
+
+    auto get_response_ready_cb()
+    {
+        return [this](uint64_t request_id, Http::Response& response) {
+            return this->notify_response_ready(request_id, response);
+        };
+    }
+
     std::optional<Http::Response> handle_request(uint64_t request_id, Http::Request const& request);
+
+    HttpClient::Requester& http_requester()
+    {
+        return m_http_requester;
+    }
 };
 
 HttpServer create_server(int port);
