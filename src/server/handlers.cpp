@@ -46,7 +46,7 @@ std::optional<Http::Response> SimpleProxyHandler::handle_request(
     };
     std::string uri_path { request.uri.path };
     uri_path.erase(0, uri_path.find(m_prefix) + m_prefix.size());
-    std::string url { std::format("{}{}", m_upstream, uri_path) };
+    std::string url { std::format("{}{}?{}", m_upstream, uri_path, request.uri.query) };
     bool success = m_requester.make_request(HttpClient::RequestMethod::GET, url, h, cb);
     if (success) {
         return {};

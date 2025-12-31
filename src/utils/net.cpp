@@ -5,8 +5,11 @@
 #include <cstring>
 #include <format>
 #include <netinet/in.h>
+#include <stdexcept>
+#include <string>
 #include <sys/poll.h>
 #include <sys/socket.h>
+#include <utility>
 #include <vector>
 
 std::pair<std::string, std::string> get_ip_and_hostname(addrinfo* ai)
@@ -47,9 +50,11 @@ std::string get_ip_address(sockaddr_storage* ss)
     return std::string { ip };
 }
 
-void PfdsHolder::ensure_fd_exists([[maybe_unused]] int fd)
+void PfdsHolder::ensure_fd_exists(int fd)
 {
-    assert(m_index_map.contains(fd) && std::format("{} descriptor doesn't exist", fd).c_str());
+    if (!m_index_map.contains(fd)) {
+        throw std::runtime_error(std::format("{} descriptor doesn't exist", fd));
+    }
 }
 
 bool PfdsHolder::has_fd(int fd)
@@ -64,7 +69,9 @@ FdKind PfdsHolder::get_kind(int fd)
 
 void PfdsHolder::add_fd(int newfd, short events, FdKind kind)
 {
-    assert(!m_index_map.contains(newfd) && std::format("fd {} already exists", newfd).c_str());
+    if (m_index_map.contains(newfd)) {
+        throw std::runtime_error(std::format("fd {} already exists", newfd));
+    }
     m_pfds.emplace_back(pollfd { .fd = newfd, .events = events, .revents = 0 });
     m_index_map[newfd] = { m_pfds.size() - 1, kind };
 }
@@ -81,17 +88,6 @@ void PfdsHolder::remove_fd(int fd)
     }
     m_pfds.pop_back();
     m_index_map.erase(fd);
-    m_marked_deleted_fds.emplace(fd);
-}
-
-bool PfdsHolder::is_marked_deleted(int fd)
-{
-    return m_marked_deleted_fds.contains(fd);
-}
-
-void PfdsHolder::reset_mark_deleted()
-{
-    m_marked_deleted_fds.clear();
 }
 
 void PfdsHolder::add_fd_events(int fd, short events)
@@ -146,4 +142,30 @@ void PfdsHolder::handle_change(PfdsChange const& change)
     default:
         assert(false && "unexpected action");
     }
+}
+
+void PfdsHolder::request_change(PfdsChange const& change)
+{
+    // m_pending_changes.emplace(change.fd, std::move(change));
+    m_pending_changes[change.fd] = std::move(change);
+}
+
+void PfdsHolder::process_changes()
+{
+    for (auto& [fd, change] : m_pending_changes) {
+        handle_change(change);
+    }
+    m_pending_changes.clear();
+}
+
+std::string PfdsHolder::debug_print()
+{
+    std::string result { "[" };
+    for (auto const& pfd : m_pfds) {
+        auto& [pos, kind] = m_index_map.at(pfd.fd);
+        result.append(std::format("{}k{} ", pfd.fd, static_cast<int>(kind)));
+    }
+    result.append("]");
+    result.append(std::format("[c: {}]", m_pending_changes));
+    return result;
 }

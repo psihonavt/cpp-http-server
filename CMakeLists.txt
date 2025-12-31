@@ -100,6 +100,16 @@ target_link_options(unit_tests PRIVATE ${MY_SANITIZING_FLAGS})
 target_link_libraries(unit_tests PRIVATE utils Catch2::Catch2)
 target_include_directories(unit_tests PRIVATE ${CMAKE_SOURCE_DIR}/tests/unit)
 
+#### cpptrace ####
+FetchContent_Declare(
+  cpptrace
+  GIT_REPOSITORY https://github.com/jeremy-rifkin/cpptrace.git
+  GIT_TAG        v1.0.4 # <HASH or TAG>
+)
+FetchContent_MakeAvailable(cpptrace)
+target_link_libraries(utils PUBLIC cpptrace::cpptrace)
+
+
 include(CTest)
 include(Catch)
 enable_testing()

@@ -4,6 +4,7 @@
 #include "http/headers.h"
 #include "http/response.h"
 #include "misc/helpers.h"
+#include "utils/logging.h"
 #include "utils/net.h"
 #include <cstddef>
 #include <cstring>
@@ -78,10 +79,9 @@ TEST_CASE("Writing HTTP responses", "[http_response_writer]")
         REQUIRE(fcntl(receiver.fd(), F_SETFL, O_NONBLOCK) == 0);
         REQUIRE(fcntl(sender.fd(), F_SETFL, O_NONBLOCK) == 0);
         PfdsHolder ph {};
-        ph.handle_change(PfdsChange(receiver.fd(), PfdsChangeAction::Add, POLLIN));
-        ph.handle_change(PfdsChange(sender.fd(), PfdsChangeAction::Add, POLLOUT));
-        auto const& pfds_receiver { ph.all()[0] };
-        auto const& pfds_sender { ph.all()[1] };
+        ph.request_change(PfdsChange(receiver.fd(), PfdsChangeAction::Add, POLLIN));
+        ph.request_change(PfdsChange(sender.fd(), PfdsChangeAction::Add, POLLOUT));
+        ph.process_changes();
 
         auto bfs { std::make_unique<std::string>(1024 * 2048, 'x') };
         auto size = bfs.get()->size();
@@ -96,17 +96,22 @@ TEST_CASE("Writing HTTP responses", "[http_response_writer]")
         Http::ResponseWriter w { std::move(response), sender };
 
         size_t written_bytes { 0 };
+        int attempts { 10 };
+        LOG_DEBUG("sender: {}; receiver: {}", sender.fd(), receiver.fd());
 
-        while (!w.is_done()) {
+        while (!w.is_done() || attempts >= 0) {
             int ready = ph.do_poll(1000);
             REQUIRE(ready > 0);
-            if (pfds_sender.revents & POLLOUT) {
-                auto error { w.write() };
-                REQUIRE(error == std::nullopt);
+            for (auto const& pfd : ph.all()) {
+                if (pfd.revents & POLLOUT) {
+                    auto error { w.write() };
+                    REQUIRE(error == std::nullopt);
+                }
+                if (pfd.revents & POLLIN) {
+                    written_bytes += fdread(receiver).size();
+                }
             }
-            if (pfds_receiver.revents & POLLIN) {
-                written_bytes += fdread(receiver).size();
-            }
+            attempts -= 1;
         }
 
         REQUIRE(written_bytes > 1024 * 2048);

@@ -1,9 +1,9 @@
 #pragma once
 
 #include <cstddef>
+#include <format>
 #include <netdb.h>
 #include <netinet/in.h>
-#include <set>
 #include <string>
 #include <sys/poll.h>
 #include <sys/socket.h>
@@ -81,23 +81,45 @@ struct PfdsChange {
     FdKind kind { FdKind::server };
 };
 
+template<>
+struct std::formatter<PfdsChange, char> {
+    constexpr auto parse(std::format_parse_context& ctx)
+    {
+        auto it = ctx.begin();
+        auto end = ctx.end();
+        if (it != end && *it != '}')
+            throw std::format_error("bad PfdsChange format");
+        return it;
+    }
+
+    template<class FormatContext>
+    auto format(PfdsChange const& v, FormatContext& ctx) const
+    {
+        return std::format_to(
+            ctx.out(), "PfdsChange(fd={},a={},e={},k={})",
+            v.fd, static_cast<int>(v.action), v.events, static_cast<int>(v.kind));
+    }
+};
+
 class PfdsHolder {
+
     std::vector<pollfd> m_pfds {};
     std::unordered_map<int, std::pair<size_t, FdKind>> m_index_map {};
-    std::set<int> m_marked_deleted_fds;
+    std::unordered_map<int, PfdsChange> m_pending_changes {};
     void ensure_fd_exists(int fd);
     void add_fd(int newfd, short events, FdKind kind);
     void remove_fd(int fd);
     void add_fd_events(int fd, short events);
     void set_fd_events(int fd, short events);
     void remove_fd_events(int fd, short events);
+    void handle_change(PfdsChange const& change);
 
 public:
-    void handle_change(PfdsChange const& change);
+    void request_change(PfdsChange const& change);
+    void process_changes();
     int do_poll(int timeout_ms = -1);
     std::vector<pollfd> const& all();
     bool has_fd(int fd);
     FdKind get_kind(int fd);
-    bool is_marked_deleted(int fd);
-    void reset_mark_deleted();
+    std::string debug_print();
 };

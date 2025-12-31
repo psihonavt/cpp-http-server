@@ -25,8 +25,8 @@ read_requests_result RequestReader::read_requests(Socket const& client)
             break;
         } else if (n < 0) {
             auto ec { std::error_code(errno, std::generic_category()) };
-            LOG_WARN("[s:{}] recv error {}({})", client.fd(), ec.message(), ec.value());
             if (ec != std::errc::operation_would_block && ec != std::errc::resource_unavailable_try_again) {
+                LOG_WARN("[s:{}] recv error {}({})", client.fd(), ec.message(), ec.value());
                 error_reading = true;
             }
             break;

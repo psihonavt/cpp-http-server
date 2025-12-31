@@ -124,13 +124,13 @@ private:
 
     std::priority_queue<time_point, std::vector<time_point>, std::greater<time_point>> m_armed_timers {};
 
-    std::optional<PfdsChange> establish_connection();
-    std::optional<PfdsChange> handle_recv_events(int sender_fd);
-    std::optional<PfdsChange> handle_send_events(int receiver_fd);
+    void establish_connection();
+    void handle_recv_events(int sender_fd);
+    void handle_send_events(int receiver_fd);
     void process_connections(int poll_count);
     void set_server_headers(Http::Response& response);
     void disarm_due_timers();
-    int requester_socket_fn_cb(curl_socket_t s, int what);
+    int requester_socket_fn_cb(CURL* handle, curl_socket_t s, int what);
     void notify_response_ready(uint64_t request_id, Http::Response& response);
 
 public:
@@ -142,9 +142,11 @@ public:
         , m_handlers {}
         , m_http_requester {}
     {
-        m_pfds.handle_change(PfdsChange { .fd = m_socket, .action = PfdsChangeAction::Add, .events = POLLIN });
-        m_pfds.handle_change(PfdsChange { .fd = Globals::s_signal_pipe_rfd, .action = PfdsChangeAction::Add, .events = POLLIN });
-        auto socket_fn = [this](curl_socket_t s, int what) { return this->requester_socket_fn_cb(s, what); };
+        m_pfds.request_change(PfdsChange { .fd = m_socket, .action = PfdsChangeAction::Add, .events = POLLIN });
+        m_pfds.request_change(PfdsChange { .fd = Globals::s_signal_pipe_rfd, .action = PfdsChangeAction::Add, .events = POLLIN });
+        m_pfds.process_changes();
+
+        auto socket_fn = [this](CURL* handle, curl_socket_t s, int what) { return this->requester_socket_fn_cb(handle, s, what); };
         auto arm_timer_fn = [this](long timeout_ms) { return this->arm_polling_timer(timeout_ms); };
         m_http_requester.initialize(socket_fn, arm_timer_fn);
 

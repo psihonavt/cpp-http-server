@@ -1,5 +1,7 @@
 #pragma once
 
+#include "cpptrace/formatting.hpp"
+#include "cpptrace/from_current.hpp"
 #include <chrono>
 #include <filesystem>
 #include <format>
@@ -49,7 +51,7 @@ public:
     }
 
     template<typename... Args>
-    void log(LogLevel level, std::source_location loc, std::format_string<Args...> fmt, Args&&... args)
+    void log(LogLevel level, std::source_location loc, bool on_exception, std::format_string<Args...> fmt, Args&&... args)
     {
         if (level < min_level_) {
             return;
@@ -63,11 +65,14 @@ public:
         std::string log_msg = std::format("[{}|{}|{}:{}] {}", Logger::log_level_as_string(level), tstamp,
             std::filesystem::path(loc_filename).filename().string(), loc.line(), msg);
         for (auto const& sink : sinks_) {
-            *sink << log_msg << std::endl;
+            *sink << log_msg << "\n";
+            if (on_exception) {
+                cpptrace::from_current_exception().print(*sink);
+            }
         }
     }
 
-    void log(LogLevel level, std::source_location loc, std::string const& msg)
+    void log(LogLevel level, std::source_location loc, bool on_exception, std::string const& msg)
     {
         if (level < min_level_) {
             return;
@@ -79,7 +84,10 @@ public:
         std::string log_msg = std::format("[{}|{}|{}:{}] {}", Logger::log_level_as_string(level), tstamp,
             std::filesystem::path(loc_filename).filename().string(), loc.line(), msg);
         for (auto const& sink : sinks_) {
-            *sink << log_msg << std::endl;
+            *sink << log_msg << "\n";
+            if (on_exception) {
+                cpptrace::from_current_exception().print(*sink);
+            }
         }
     }
 
@@ -105,11 +113,17 @@ private:
 
 inline void setup_logging(LogLevel log_level = LogLevel::INFO)
 {
+    auto formatter = cpptrace::formatter {}
+                         .header("Stack trace:")
+                         .addresses(cpptrace::formatter::address_mode::object)
+                         .snippets(true);
+
     Logger::instance().add_console();
     Logger::instance().set_log_level(log_level);
 }
 
-#define LOG_DEBUG(...) Logger::instance().log(LogLevel::DEBUG, std::source_location::current(), __VA_ARGS__)
-#define LOG_INFO(...) Logger::instance().log(LogLevel::INFO, std::source_location::current(), __VA_ARGS__)
-#define LOG_ERROR(...) Logger::instance().log(LogLevel::ERROR, std::source_location::current(), __VA_ARGS__)
-#define LOG_WARN(...) Logger::instance().log(LogLevel::WARN, std::source_location::current(), __VA_ARGS__)
+#define LOG_DEBUG(...) Logger::instance().log(LogLevel::DEBUG, std::source_location::current(), false, __VA_ARGS__)
+#define LOG_INFO(...) Logger::instance().log(LogLevel::INFO, std::source_location::current(), false, __VA_ARGS__)
+#define LOG_ERROR(...) Logger::instance().log(LogLevel::ERROR, std::source_location::current(), false, __VA_ARGS__)
+#define LOG_WARN(...) Logger::instance().log(LogLevel::WARN, std::source_location::current(), false, __VA_ARGS__)
+#define LOG_EXCEPTION(...) Logger::instance().log(LogLevel::ERROR, std::source_location::current(), true, __VA_ARGS__)

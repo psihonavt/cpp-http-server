@@ -34,13 +34,14 @@ struct RequestResult {
 };
 
 using request_done_callback = std::function<void(RequestResult)>;
-using server_socket_callback = std::function<int(curl_socket_t, int)>;
+using server_socket_callback = std::function<int(CURL*, curl_socket_t, int)>;
 using server_timer_callback = std::function<size_t(long)>;
 
 struct CurlHandleCtx {
     curl_slist* headers;
     request_done_callback cb;
     std::string response_content;
+    std::string url;
 
     ~CurlHandleCtx()
     {
@@ -61,7 +62,7 @@ private:
     server_timer_callback m_server_timer_callback;
 
     static int socket_callback_trampoline(
-        [[maybe_unused]] CURLM* handle,
+        CURL* handle,
         curl_socket_t s,
         int what,
         void* clientp,
@@ -69,7 +70,7 @@ private:
     {
         auto requester = static_cast<Requester*>(clientp);
         if (requester->m_server_socket_callback) {
-            return requester->m_server_socket_callback(s, what);
+            return requester->m_server_socket_callback(handle, s, what);
         }
         return -1;
     }
@@ -107,8 +108,10 @@ public:
         return m_initialized;
     }
 
-    int drive(int socket_fd, short event);
+    int drive(int socket_fd = -1, short event = 0);
     void drain_messages();
+
+    CurlHandleCtx* get_handle_ctx(CURL* handle);
 };
 
 }
