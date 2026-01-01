@@ -122,4 +122,5 @@ public:
     bool has_fd(int fd);
     FdKind get_kind(int fd);
     std::string debug_print();
+    bool are_events_set(int fd, short events);
 };

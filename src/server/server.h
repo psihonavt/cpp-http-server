@@ -44,10 +44,12 @@ public:
     bool is_sending()
     {
         if (cur_response_writer && !cur_response_writer->is_done()) {
+            LOG_DEBUG("[s:{}] has a writer that's writing", client.fd());
             return true;
         }
         if (!req_resp_queue.empty()) {
-            if (std::get<2>(req_resp_queue.front())) {
+            if (has_ready_to_serve_response()) {
+                LOG_DEBUG("[s:{}]rid:{} no writer but pending response", client.fd(), std::get<0>(req_resp_queue.front()));
                 return true;
             }
         }
@@ -92,6 +94,16 @@ public:
     void clear_pending_requests()
     {
         request_reader.erase_requests();
+    }
+
+    bool has_ready_to_serve_response()
+    {
+        return !req_resp_queue.empty() && std::get<2>(req_resp_queue.front());
+    }
+
+    bool has_ready_and_potential_responses()
+    {
+        return !req_resp_queue.empty();
     }
 };
 

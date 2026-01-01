@@ -112,42 +112,48 @@ void HttpServer::establish_connection()
 void HttpServer::handle_recv_events(int sender_fd)
 {
     if (!m_connections.contains(sender_fd)) {
-        LOG_ERROR("No connection found for socket {}!", sender_fd);
+        LOG_ERROR("[s:{}] recv_events NO CONNECTION", sender_fd);
+        m_pfds.request_change(PfdsChange { .fd = sender_fd, .action = PfdsChangeAction::Remove });
         return;
     }
     auto& connection { m_connections.at(sender_fd) };
 
     if (!connection.read_pending_requests()) {
-        LOG_DEBUG("[{}][s:{}] failed to read requests", connection.connection_id, sender_fd);
-        m_connections.erase(sender_fd);
-        m_pfds.request_change(PfdsChange { .fd = sender_fd, .action = PfdsChangeAction::Remove });
+        // in the event of failure to read data from the client (connection closed, read error, parsing error), if either:
+        // * there are no pending/ready responses to send
+        // * there is not POLLOUT event on the client socket - there might be a pending response, but the client has already closed the connection
+        // -- close connection on our end as well
+        if (!connection.has_ready_and_potential_responses() || !m_pfds.are_events_set(sender_fd, POLLOUT)) {
+            m_connections.erase(sender_fd);
+            m_pfds.request_change(PfdsChange { .fd = sender_fd, .action = PfdsChangeAction::Remove });
+        } else {
+            LOG_INFO("[s:{}] removing a POLLIN event; pr: {}", sender_fd, std::get<0>(connection.req_resp_queue.front()));
+            m_pfds.request_change(PfdsChange { .fd = sender_fd, .action = PfdsChangeAction::RemoveEvents, .events = POLLIN });
+        }
         return;
     } else {
         LOG_INFO("[{}][s:{}] read {} requests", connection.connection_id, sender_fd, connection.request_reader.requests().size());
         for (auto& request : connection.request_reader.requests()) {
-            LOG_INFO("[{}][s:{}] Got HTTP request: {} {}", connection.connection_id, sender_fd, request.method, request.uri.path);
             auto request_id = generate_id();
+            LOG_INFO("[{}][s:{}] Got HTTP r:{} {} {}?{}", connection.connection_id, sender_fd, request_id, request.method, request.uri.path, request.uri.query);
             auto response = handle_request(request_id, request);
             connection.req_resp_queue.push_back({ request_id, std::move(request), std::move(response) });
-            m_request_to_client_fd.emplace(request_id, connection.client.fd());
+            m_request_to_client_fd[request_id] = connection.client.fd();
         }
         connection.clear_pending_requests();
 
-        if (connection.req_resp_queue.empty()) {
-            return;
-        } else {
-            if (std::get<2>(connection.req_resp_queue.front())) {
-                m_pfds.request_change(PfdsChange { .fd = sender_fd, .action = PfdsChangeAction::AddEvents, .events = POLLOUT });
-                return;
-            }
+        if (connection.has_ready_to_serve_response()) {
+            m_pfds.request_change(PfdsChange { .fd = sender_fd, .action = PfdsChangeAction::AddEvents, .events = POLLOUT });
         }
+        return;
     }
 }
 
 void HttpServer::handle_send_events(int receiver_fd)
 {
     if (!m_connections.contains(receiver_fd)) {
-        LOG_ERROR("No connection found for socket {}!", receiver_fd);
+        LOG_ERROR("[s:{}] send_events NO CONNECTION", receiver_fd);
+        m_pfds.request_change(PfdsChange { .fd = receiver_fd, .action = PfdsChangeAction::Remove });
         return;
     }
 
@@ -162,7 +168,6 @@ void HttpServer::handle_send_events(int receiver_fd)
         bool is_success = connection.send_pending();
         if (!is_success) {
             m_connections.erase(receiver_fd);
-            LOG_DEBUG("[{}][s:{}] problems sending a response. Removing fd from polling.", connection.connection_id, receiver_fd);
             m_pfds.request_change(PfdsChange { .fd = receiver_fd, .action = PfdsChangeAction::Remove });
             return;
         }
@@ -179,12 +184,13 @@ void HttpServer::handle_send_events(int receiver_fd)
 
 void HttpServer::process_connections(int poll_count)
 {
-    LOG_DEBUG("polling {} fds right now", m_pfds.all().size());
-    LOG_DEBUG("{}", m_pfds.debug_print());
+    // LOG_DEBUG("polling {} fds right now", m_pfds.all().size());
+    // LOG_DEBUG("{}", m_pfds.debug_print());
     if (poll_count > 0) {
         for (auto const& pfd : m_pfds.all()) {
 
             auto fd_kind = m_pfds.get_kind(pfd.fd);
+            LOG_INFO("[s:{}k{}] e:{}; re:{}", pfd.fd, static_cast<int>(fd_kind), pfd.events, pfd.revents);
 
             if (fd_kind == FdKind::server) {
                 if (pfd.revents & (POLLIN | POLLHUP)) {
@@ -211,7 +217,7 @@ void HttpServer::process_connections(int poll_count)
         // LOG_DEBUG("after requester driving {}", m_pfds.debug_print());
     }
     // LOG_DEBUG("before processing changes {}", m_pfds.debug_print());
-    LOG_DEBUG("before processing changes: {}", m_pfds.debug_print());
+    // LOG_DEBUG("before processing changes: {}", m_pfds.debug_print());
     m_pfds.process_changes();
     // LOG_DEBUG("m_pfds processed changes for: {}", changed_fds);
 }
@@ -257,7 +263,7 @@ void HttpServer::serve(ServeStrategy& strategy)
         if (!strategy.serve_infitine()) {
             strategy.used_timeouts.emplace_back(timeout_ms);
         }
-        LOG_DEBUG("Drive timeout {} ms, cap: {}", timeout_ms, strategy.drives_cap);
+        LOG_INFO("Drive timeout {} ms, cap: {}", timeout_ms, strategy.drives_cap);
         drive(timeout_ms);
         immediate_run_requested = false;
         bool new_timers_armed { m_armed_timers.size() > armed_timers_count_before };
@@ -318,6 +324,7 @@ void HttpServer::notify_response_ready(uint64_t request_id, Http::Response& resp
                         // set_server_headers(response);
                         resp = std::move(response);
                         m_pfds.request_change(PfdsChange { client_fd, PfdsChangeAction::AddEvents, POLLOUT });
+                        m_request_to_client_fd.erase(request_id);
                         return;
                     }
                 }
@@ -335,12 +342,12 @@ size_t HttpServer::arm_polling_timer(long timeout_ms)
     return 0;
 }
 
-int HttpServer::requester_socket_fn_cb(CURL* handle, curl_socket_t s, int what)
+int HttpServer::requester_socket_fn_cb([[maybe_unused]] CURL* handle, curl_socket_t s, int what)
 {
-    if (handle) {
-        auto ctx = m_http_requester.get_handle_ctx(handle);
-        LOG_DEBUG("[s:{}] socket fn for url {}", s, ctx->url);
-    }
+    // if (handle) {
+    //     auto ctx = m_http_requester.get_handle_ctx(handle);
+    //     LOG_DEBUG("[s:{}] socket fn for url {}", s, ctx->url);
+    // }
 
     LOG_DEBUG("[s:{}] socket fn for {}", s, what);
     if (what == CURL_POLL_REMOVE) {

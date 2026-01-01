@@ -25,20 +25,27 @@ int main(int argc, char** argv)
     int listen_backlog { Server::LISTEN_BACKLOG };
     LogLevel log_level { LogLevel::INFO };
     std::string proxy_handler;
+    std::string log_file;
     rlim_t ulimit { 1024 };
     app.add_option("-p, --port", port, "server port");
     app.add_option("-r, --server-root", server_root, "server root (serve files from here)");
     app.add_option("-b, --listen-backlog", listen_backlog, "listening backlog");
     app.add_option("-l, --log-level", log_level, "log level");
     app.add_option("--proxy-from", proxy_handler, "a simple proxy handler in the format <upstream_url>::<mount location>");
+    app.add_option("--log-file", log_file, "a path to the log file");
     app.add_option("--ulimit", ulimit, "a custom opened files limit");
 
     CLI11_PARSE(app, argc, argv);
-    setup_logging(log_level);
+    if (log_file.empty()) {
+        setup_logging(log_level, true);
+    } else {
+        setup_logging(log_level, false, log_file);
+    }
     Server::setup_signal_handling();
+
     if (Server::Globals::s_signal_pipe_rfd == -1) {
         LOG_ERROR("read signal pipe must be initialized.");
-        std::exit(1);
+        return 1;
     }
 
     rlimit rlim;
@@ -46,7 +53,7 @@ int main(int argc, char** argv)
     rlim.rlim_cur = ulimit;
     if (setrlimit(RLIMIT_NOFILE, &rlim) != 0) {
         LOG_ERROR("Error setting ulimit: {}", strerror(errno));
-        std::exit(1);
+        return 1;
     }
     getrlimit(RLIMIT_NOFILE, &rlim);
 
@@ -86,6 +93,7 @@ int main(int argc, char** argv)
     server.mount_handler("/video-stream", stream_proxy_handler);
 
     auto serving_strategy = Server::ServeStrategy::make_infinite_strategy();
+
     CPPTRACE_TRY
     {
         server.serve(serving_strategy);

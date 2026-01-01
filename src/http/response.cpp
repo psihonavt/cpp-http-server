@@ -145,7 +145,7 @@ response_write_result ResponseWriter::write_body()
     }
 
     if (!m_response.body) {
-        LOG_DEBUG("{} no resp body; writing is done", m_recipient.fd());
+        LOG_DEBUG("[s:{}] no resp body; writing is done", m_recipient.fd());
         m_status = Status::WRITING_DONE;
         return std::nullopt;
     }
@@ -185,7 +185,7 @@ response_write_result ResponseWriter::write_body()
 
     // done sending
     if (m_body_buff_size == 0) {
-        LOG_DEBUG("{} done sending", m_recipient.fd());
+        LOG_DEBUG("[s:{}] done sending", m_recipient.fd());
         m_status = Status::WRITING_DONE;
         return std::nullopt;
     }
@@ -202,6 +202,11 @@ response_write_result ResponseWriter::write_body()
     }
     m_body_buff_sent += static_cast<size_t>(sent);
     LOG_DEBUG("[s:{}] bytes sent ... {}", m_recipient.fd(), sent);
+    // if the current chunk is done, attempt to send the next one immediately
+    if (m_body_buff_sent == m_body_buff_size) {
+        LOG_DEBUG("chunk is done, attempting to send the next chunk ...");
+        return write_body();
+    }
     return std::nullopt;
 }
 

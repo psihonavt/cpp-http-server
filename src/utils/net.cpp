@@ -169,3 +169,9 @@ std::string PfdsHolder::debug_print()
     result.append(std::format("[c: {}]", m_pending_changes));
     return result;
 }
+
+bool PfdsHolder::are_events_set(int fd, short events)
+{
+    auto pfd { m_pfds[m_index_map[fd].first] };
+    return pfd.events & events;
+}

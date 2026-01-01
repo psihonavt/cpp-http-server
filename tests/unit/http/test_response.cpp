@@ -96,22 +96,18 @@ TEST_CASE("Writing HTTP responses", "[http_response_writer]")
         Http::ResponseWriter w { std::move(response), sender };
 
         size_t written_bytes { 0 };
-        int attempts { 10 };
         LOG_DEBUG("sender: {}; receiver: {}", sender.fd(), receiver.fd());
 
-        while (!w.is_done() || attempts >= 0) {
+        while (!w.is_done()) {
             int ready = ph.do_poll(1000);
             REQUIRE(ready > 0);
             for (auto const& pfd : ph.all()) {
                 if (pfd.revents & POLLOUT) {
                     auto error { w.write() };
                     REQUIRE(error == std::nullopt);
-                }
-                if (pfd.revents & POLLIN) {
                     written_bytes += fdread(receiver).size();
                 }
             }
-            attempts -= 1;
         }
 
         REQUIRE(written_bytes > 1024 * 2048);

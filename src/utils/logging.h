@@ -8,8 +8,10 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <ostream>
 #include <source_location>
+#include <stdexcept>
 #include <vector>
 
 enum class LogLevel { DEBUG,
@@ -36,6 +38,8 @@ public:
         file_ = std::make_unique<std::ofstream>(filename, std::ios::app);
         if (file_->is_open()) {
             sinks_.push_back(file_.get());
+        } else {
+            throw std::runtime_error(std::format("Can't add {} as a log file", filename));
         }
     }
 
@@ -111,14 +115,19 @@ private:
     }
 };
 
-inline void setup_logging(LogLevel log_level = LogLevel::INFO)
+inline void setup_logging(LogLevel log_level = LogLevel::INFO, bool use_console = true, std::optional<std::string> filename = std::nullopt)
 {
     auto formatter = cpptrace::formatter {}
                          .header("Stack trace:")
                          .addresses(cpptrace::formatter::address_mode::object)
                          .snippets(true);
 
-    Logger::instance().add_console();
+    if (use_console) {
+        Logger::instance().add_console();
+    }
+    if (filename) {
+        Logger::instance().add_file(*filename);
+    }
     Logger::instance().set_log_level(log_level);
 }
 
