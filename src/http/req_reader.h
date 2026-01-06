@@ -6,7 +6,13 @@
 
 namespace Http {
 
-using read_requests_result = std::tuple<bool, bool>;
+enum class ReqReaderResult {
+    DONE,
+    MAYBE_CAN_READ_MORE,
+    PARSING_ERROR,
+    READING_ERROR,
+    CLIENT_CLOSED_CONNECTION,
+};
 
 class RequestReader {
     RequestParser m_parser;
@@ -20,7 +26,7 @@ public:
         m_requests = {};
     }
 
-    read_requests_result read_requests(Socket const& client);
+    ReqReaderResult read_requests(Socket const& client);
 
     std::vector<Request>& requests()
     {

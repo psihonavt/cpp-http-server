@@ -31,3 +31,13 @@ void fdsend(int fd, std::string const& content)
     }
     REQUIRE(static_cast<size_t>(n) == content.size());
 }
+
+void fdsend_http_request(int fd, Http::Request& request)
+{
+    std::string repr = std::format("{} {} HTTP/1.1\r\n\r\n", request.method, request.uri.path);
+    auto n = send(fd, repr.c_str(), repr.size(), 0);
+    if (n <= 0) {
+        FAIL(strerror(errno));
+    }
+    REQUIRE(static_cast<size_t>(n) == repr.size());
+}

@@ -1,4 +1,5 @@
 #include "net.h"
+#include "utils/logging.h"
 #include <arpa/inet.h>
 #include <cassert>
 #include <cstddef>
@@ -146,8 +147,12 @@ void PfdsHolder::handle_change(PfdsChange const& change)
 
 void PfdsHolder::request_change(PfdsChange const& change)
 {
-    // m_pending_changes.emplace(change.fd, std::move(change));
     m_pending_changes[change.fd] = std::move(change);
+}
+
+void PfdsHolder::undo_change(int fd)
+{
+    m_pending_changes.erase(fd);
 }
 
 void PfdsHolder::process_changes()
@@ -173,5 +178,5 @@ std::string PfdsHolder::debug_print()
 bool PfdsHolder::are_events_set(int fd, short events)
 {
     auto pfd { m_pfds[m_index_map[fd].first] };
-    return pfd.events & events;
+    return pfd.revents & events;
 }

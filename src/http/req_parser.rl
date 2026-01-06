@@ -71,7 +71,6 @@ action get_field_name {
 }
 
 action done {
-  LOG_DEBUG("Parsing is done");
   fbreak;
 }
 

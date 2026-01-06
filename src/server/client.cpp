@@ -1,9 +1,12 @@
 #include "client.h"
+#include "debug_config.h"
 #include "http/headers.h"
 #include "http/response.h"
+#include "server/context.h"
 #include "utils/helpers.h"
 #include "utils/logging.h"
 #include <cstddef>
+#include <cstdint>
 #include <curl/curl.h>
 #include <curl/easy.h>
 #include <curl/header.h>
@@ -11,6 +14,7 @@
 #include <format>
 #include <string>
 #include <sys/signal.h>
+#include <vector>
 
 namespace Server {
 
@@ -64,7 +68,30 @@ size_t write_data_callback(char* buffer, size_t size, size_t nmemb, void* userp)
     return real_size;
 }
 
+int debug_callback(CURL* handle,
+    curl_infotype type,
+    [[maybe_unused]] char* data,
+    [[maybe_unused]] size_t size,
+    [[maybe_unused]] void* clientp)
+{
+    // LOG_INFO("in debug_callback");
+    CURLcode code;
+    CurlHandleCtx* ctx { nullptr };
+    code = curl_easy_getinfo(handle, CURLINFO_PRIVATE, &ctx);
+    if (code != CURLE_OK) {
+        LOG_DEBUG("failed to get the handle context: {}", curl_easy_strerror(code));
+        return 0;
+    }
+    if (ctx->url.empty()) {
+        LOG_DEBUG("curl debug_callback: {}<EMPTY><-{}", handle, static_cast<int>(type));
+    } else {
+        LOG_DEBUG("curl debug_callback: {}<-{}", ctx->url, static_cast<int>(type));
+    }
+    return 0;
+}
+
 bool Requester::make_request(
+    RequestContext const& ctx,
     RequestMethod method,
     std::string const& url,
     Http::Headers const& headers,
@@ -82,7 +109,12 @@ bool Requester::make_request(
         return false;
     }
 
-    auto* handle_ctx = new CurlHandleCtx { .headers = nullptr, .cb = done_callback, .response_content = "", .url = url };
+    auto* handle_ctx = new CurlHandleCtx {
+        .headers = nullptr,
+        .cb = done_callback,
+        .response_content = "",
+        .url = url
+    };
 
     CURLcode retcode;
     retcode = curl_easy_setopt(handle, CURLOPT_PRIVATE, handle_ctx);
@@ -129,6 +161,25 @@ bool Requester::make_request(
         return false;
     }
 
+    IF_VERBOSE
+    {
+        retcode = curl_easy_setopt(handle, CURLOPT_DEBUGFUNCTION, debug_callback);
+        if (retcode != CURLE_OK) {
+            LOG_ERROR("Error setting CURLOPT_DEBUGFUNCTION: {}", curl_easy_strerror(retcode));
+            delete handle_ctx;
+            curl_easy_cleanup(handle);
+            return false;
+        }
+
+        retcode = curl_easy_setopt(handle, CURLOPT_VERBOSE, 1L);
+        if (retcode != CURLE_OK) {
+            LOG_ERROR("Error setting CURLOPT_VERBOSE: {}", curl_easy_strerror(retcode));
+            delete handle_ctx;
+            curl_easy_cleanup(handle);
+            return false;
+        }
+    }
+
     auto mretcode = curl_multi_add_handle(m_curl_multi, handle);
     if (mretcode != CURLM_OK) {
         LOG_ERROR("Error adding a handle: {}", curl_multi_strerror(mretcode));
@@ -137,19 +188,40 @@ bool Requester::make_request(
         return false;
     }
 
+    LOG_DEBUG("storing handle {} for conn_id {}", handle, ctx.conn_id());
+    m_registered_handles.insert({ handle, ctx.conn_id() });
+
     if (drive() == -1) {
         delete handle_ctx;
         curl_multi_remove_handle(m_curl_multi, handle);
         curl_easy_cleanup(handle);
         return false;
     }
-
     return true;
+}
+
+void Requester::cleanup_for_connection(uint64_t connection_id)
+{
+    std::vector<CURL*> to_clean_up {};
+    for (auto [handle, conn_id] : m_registered_handles) {
+        if (conn_id == connection_id) {
+            to_clean_up.emplace_back(handle);
+        }
+    }
+
+    for (auto handle : to_clean_up) {
+        cleanup_handle(handle);
+        m_registered_handles.erase(handle);
+    }
 }
 
 int Requester::drive(int socket_fd, short events)
 {
-    LOG_DEBUG("[s:{}<-{}] driving; rh: {}", socket_fd, events, m_running_handles);
+    IF_VERBOSE
+    {
+        LOG_DEBUG("[s:{}<-{}] driving; rh: {}", socket_fd, events, m_running_handles);
+    }
+
     CURLMcode retcode;
 
     if (socket_fd == -1) {
@@ -202,21 +274,6 @@ Http::Headers Requester::extract_headers(CURL* handle)
     return headers;
 }
 
-CurlHandleCtx* Requester::get_handle_ctx(CURL* handle)
-{
-    if (!handle) {
-        return nullptr;
-    }
-    CurlHandleCtx* ctx_pointer;
-    CURLcode retcode;
-
-    retcode = curl_easy_getinfo(handle, CURLINFO_PRIVATE, &ctx_pointer);
-    if (retcode != CURLE_OK) {
-        LOG_ERROR("Error getting CURLINFO_RPIVATE: {}", curl_easy_strerror(retcode));
-    }
-    return ctx_pointer;
-}
-
 void Requester::handle_msgdone(CURLMsg* msg)
 {
     auto* handle = msg->easy_handle;
@@ -228,9 +285,6 @@ void Requester::handle_msgdone(CURLMsg* msg)
     retcode = curl_easy_getinfo(handle, CURLINFO_PRIVATE, &ctx_pointer);
     if (retcode != CURLE_OK) {
         LOG_ERROR("Error getting CURLINFO_RPIVATE: {}", curl_easy_strerror(retcode));
-        delete ctx_pointer;
-        curl_multi_remove_handle(m_curl_multi, handle);
-        curl_easy_cleanup(msg->easy_handle);
         return;
     }
     if (msg->data.result != CURLE_OK) {
@@ -242,9 +296,6 @@ void Requester::handle_msgdone(CURLMsg* msg)
         retcode = curl_easy_getinfo(handle, CURLINFO_RESPONSE_CODE, &response_code);
         if (retcode != CURLE_OK) {
             LOG_ERROR("Error getting CURLINFO_RESPONSE_CODE: {}", curl_easy_strerror(retcode));
-            delete ctx_pointer;
-            curl_multi_remove_handle(m_curl_multi, handle);
-            curl_easy_cleanup(msg->easy_handle);
             return;
         }
         if (!response_headers.content_length()) {
@@ -257,24 +308,54 @@ void Requester::handle_msgdone(CURLMsg* msg)
             ctx_pointer->response_content,
             response_headers);
         result = RequestResult(response);
+        LOG_DEBUG("handle_msgdone for {}; status code: {}", ctx_pointer->url, response_code);
     }
     ctx_pointer->cb(std::move(result));
-    delete ctx_pointer;
-    curl_multi_remove_handle(m_curl_multi, handle);
-    curl_easy_cleanup(handle);
+    return;
 }
 
 void Requester::drain_messages()
 {
     int msgs_q { 0 };
     auto msg = curl_multi_info_read(m_curl_multi, &msgs_q);
-    LOG_DEBUG("Draining {} curl multi messages", msgs_q);
     while (msg) {
         if (msg->msg == CURLMSG_DONE) {
             handle_msgdone(msg);
+            cleanup_handle(msg->easy_handle);
+            m_registered_handles.erase(msg->easy_handle);
         }
         msg = curl_multi_info_read(m_curl_multi, &msgs_q);
     }
 }
+
+void Requester::cleanup_handle(CURL* handle)
+{
+    LOG_DEBUG("Clearing up things for handle {}", handle);
+
+    CurlHandleCtx* ctx_pointer;
+    CURLcode retcode;
+    CURLMcode mretcode;
+
+    retcode = curl_easy_getinfo(handle, CURLINFO_PRIVATE, &ctx_pointer);
+    if (retcode != CURLE_OK) {
+        LOG_WARN("Error getting CURLINFO_RPIVATE: {}", curl_easy_strerror(retcode));
+    } else {
+        delete ctx_pointer;
+    }
+    mretcode = curl_multi_remove_handle(m_curl_multi, handle);
+    if (mretcode != CURLM_OK) {
+        LOG_WARN("curl_multi_remove_handle: {}", curl_multi_strerror(mretcode));
+    }
+    curl_easy_cleanup(handle);
+    return;
+}
+
+CurlHandleCtx* Requester::get_handle_ctx(CURL* handle)
+{
+    CurlHandleCtx* ctx { nullptr };
+    curl_easy_getinfo(handle, CURLINFO_PRIVATE, &ctx);
+    return ctx;
+}
+
 }
 }

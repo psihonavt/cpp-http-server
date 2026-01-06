@@ -1,5 +1,6 @@
 #include "response.h"
 #include "config.h"
+#include "debug_config.h"
 #include "errors.h"
 #include "http/headers.h"
 #include "utils/helpers.h"
@@ -57,7 +58,6 @@ std::optional<ContentRange> ResponseWriter::adjust_range_to_body(ContentRange co
 
     ContentRange adjusted_range {};
     if (range.lower != ContentRange::UNBOUND_RANGE) {
-        LOG_INFO("lower bound: {}; size: {}", range.lower, m_response.body->length - 1);
         if (static_cast<size_t>(range.lower) > m_response.body->length - 1) {
             return std::nullopt;
         }
@@ -145,7 +145,6 @@ response_write_result ResponseWriter::write_body()
     }
 
     if (!m_response.body) {
-        LOG_DEBUG("[s:{}] no resp body; writing is done", m_recipient.fd());
         m_status = Status::WRITING_DONE;
         return std::nullopt;
     }
@@ -190,21 +189,25 @@ response_write_result ResponseWriter::write_body()
         return std::nullopt;
     }
 
-    LOG_DEBUG("[s:{}] Attempting to send ... {}", m_recipient.fd(), m_body_buff_size - m_body_buff_sent);
+    IF_VERBOSE
+    {
+        LOG_DEBUG("[s:{}] Attempting to send ... {}", m_recipient.fd(), m_body_buff_size - m_body_buff_sent);
+    }
     ssize_t sent = send(m_recipient.fd(), m_body_buff.get() + m_body_buff_sent, m_body_buff_size - m_body_buff_sent, 0);
     if (sent < 0) {
         if (errno == EWOULDBLOCK || errno == EAGAIN) {
-            LOG_DEBUG("IN EWOULDBLOCK OR EAGAIN? {}", errno);
             return std::nullopt;
         } else {
             return std::error_code { errno, std::generic_category() };
         }
     }
     m_body_buff_sent += static_cast<size_t>(sent);
-    LOG_DEBUG("[s:{}] bytes sent ... {}", m_recipient.fd(), sent);
+    IF_VERBOSE
+    {
+        LOG_DEBUG("[s:{}] bytes sent ... {}", m_recipient.fd(), sent);
+    }
     // if the current chunk is done, attempt to send the next one immediately
     if (m_body_buff_sent == m_body_buff_size) {
-        LOG_DEBUG("chunk is done, attempting to send the next chunk ...");
         return write_body();
     }
     return std::nullopt;
@@ -253,5 +256,4 @@ size_t ResponseWriter::calculate_headers_size()
     total_size += rn_size;
     return total_size;
 }
-
 }

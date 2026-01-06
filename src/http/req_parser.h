@@ -7,6 +7,7 @@
 namespace Http {
 
 enum class RequestParsingStatus {
+    NotStarted,
     Finished,
     Error,
     NeedMoreData,

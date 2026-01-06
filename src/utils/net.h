@@ -116,6 +116,7 @@ class PfdsHolder {
 
 public:
     void request_change(PfdsChange const& change);
+    void undo_change(int fd);
     void process_changes();
     int do_poll(int timeout_ms = -1);
     std::vector<pollfd> const& all();

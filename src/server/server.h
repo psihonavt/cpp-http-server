@@ -1,20 +1,18 @@
 #pragma once
 
 #include "client.h"
-#include "commons.h"
+#include "context.h"
 #include "globals.h"
 #include "handlers.h"
-#include "http/req_reader.h"
 #include "http/request.h"
 #include "http/response.h"
-#include "utils/helpers.h"
-#include "utils/logging.h"
 #include "utils/net.h"
 #include <cstdint>
 #include <curl/curl.h>
-#include <deque>
 #include <functional>
 #include <limits>
+#include <list>
+#include <optional>
 #include <queue>
 #include <stdexcept>
 #include <unordered_map>
@@ -22,90 +20,6 @@
 #include <vector>
 
 namespace Server {
-
-class Connection {
-public:
-    Socket client;
-    uint64_t connection_id;
-
-    std::deque<std::tuple<uint64_t, Http::Request, std::optional<Http::Response>>> req_resp_queue;
-    std::optional<Http::ResponseWriter> cur_response_writer;
-    Http::RequestReader request_reader;
-
-    Connection(Socket& cl)
-        : client { std::move(cl) }
-        , req_resp_queue {}
-        , cur_response_writer { std::nullopt }
-        , request_reader {}
-    {
-        connection_id = generate_id();
-    }
-
-    bool is_sending()
-    {
-        if (cur_response_writer && !cur_response_writer->is_done()) {
-            LOG_DEBUG("[s:{}] has a writer that's writing", client.fd());
-            return true;
-        }
-        if (!req_resp_queue.empty()) {
-            if (has_ready_to_serve_response()) {
-                LOG_DEBUG("[s:{}]rid:{} no writer but pending response", client.fd(), std::get<0>(req_resp_queue.front()));
-                return true;
-            }
-        }
-        return false;
-    }
-
-    bool send_pending()
-    {
-        if (!is_sending()) {
-            LOG_ERROR("[{}][s:{}] Connection isn't sending data", connection_id, client.fd());
-            return false;
-        }
-
-        if (!cur_response_writer) {
-            auto& [request_id, request, response] { req_resp_queue.front() };
-            if (!response) {
-                LOG_ERROR("[{}][s:{}] Attempt to send not-yet-ready response", connection_id, client.fd());
-                return false;
-            }
-            cur_response_writer.emplace(std::move(*response), client, request.headers);
-            req_resp_queue.pop_front();
-        }
-
-        auto maybe_erorr { cur_response_writer->write() };
-        if (maybe_erorr) {
-            LOG_ERROR("[{}][s:{}] Error writing response: {}", connection_id, client.fd(), maybe_erorr->message());
-            return false;
-        }
-
-        if (cur_response_writer->is_done()) {
-            cur_response_writer.reset();
-        }
-        return true;
-    }
-
-    bool read_pending_requests()
-    {
-        auto [error_reading, error_parsing] { request_reader.read_requests(client) };
-        return !(error_reading || error_parsing);
-    }
-
-    void clear_pending_requests()
-    {
-        request_reader.erase_requests();
-    }
-
-    bool has_ready_to_serve_response()
-    {
-        return !req_resp_queue.empty() && std::get<2>(req_resp_queue.front());
-    }
-
-    bool has_ready_and_potential_responses()
-    {
-        return !req_resp_queue.empty();
-    }
-};
 
 struct ServeStrategy {
     static int const INFINITE_CAP = std::numeric_limits<int>::max();
@@ -129,9 +43,10 @@ class HttpServer {
 private:
     Socket m_socket;
     std::unordered_map<int, Connection> m_connections;
-    std::unordered_map<uint64_t, int> m_request_to_client_fd;
+    std::vector<Connection> m_connections_pending_cleanup;
     PfdsHolder m_pfds;
     std::unordered_map<std::string, std::reference_wrapper<IRequestHandler>> m_handlers;
+    std::unordered_map<uint64_t, std::list<RequestContext>> m_registered_ctxs;
     HttpClient::Requester m_http_requester;
 
     std::priority_queue<time_point, std::vector<time_point>, std::greater<time_point>> m_armed_timers {};
@@ -143,15 +58,22 @@ private:
     void set_server_headers(Http::Response& response);
     void disarm_due_timers();
     int requester_socket_fn_cb(CURL* handle, curl_socket_t s, int what);
-    void notify_response_ready(uint64_t request_id, Http::Response& response);
+    void notify_response_ready(RequestContext const& ctx, Http::Response& response);
+
+    auto get_response_ready_cb()
+    {
+        return [this](RequestContext const& ctx, Http::Response& response) {
+            return this->notify_response_ready(ctx, response);
+        };
+    }
 
 public:
     HttpServer(Socket& socket)
         : m_socket { std::move(socket) }
         , m_connections {}
-        , m_request_to_client_fd {}
         , m_pfds {}
         , m_handlers {}
+        , m_registered_ctxs {}
         , m_http_requester {}
     {
         m_pfds.request_change(PfdsChange { .fd = m_socket, .action = PfdsChangeAction::Add, .events = POLLIN });
@@ -173,19 +95,15 @@ public:
     void drive(int timeout_ms);
     void mount_handler(std::string const& path, IRequestHandler& handler);
 
-    auto get_response_ready_cb()
-    {
-        return [this](uint64_t request_id, Http::Response& response) {
-            return this->notify_response_ready(request_id, response);
-        };
-    }
-
-    std::optional<Http::Response> handle_request(uint64_t request_id, Http::Request const& request);
+    std::optional<Http::Response> handle_request(RequestContext const& ctx, Http::Request const& request);
 
     HttpClient::Requester& http_requester()
     {
         return m_http_requester;
     }
+
+    void cancel_connetion(int fd);
+    void cleanup_connections();
 };
 
 HttpServer create_server(int port);

@@ -23,8 +23,8 @@ TEST_CASE("Request reader test cases", "[http_request_reader]")
     SECTION("An entire request in a buffer")
     {
         send_to_socket(sender, "GET / HTTP/1.1\r\n\r\n");
-        auto [error_reading, error_parsing] { rreader.read_requests(receiver) };
-        REQUIRE((!error_parsing && !error_reading));
+        auto result { rreader.read_requests(receiver) };
+        REQUIRE(result == Http::ReqReaderResult::DONE);
         REQUIRE(!rreader.requests().empty());
         REQUIRE(rreader.requests().size() == 1);
     }
@@ -32,37 +32,37 @@ TEST_CASE("Request reader test cases", "[http_request_reader]")
     SECTION("An incomplete request in a buffer")
     {
         send_to_socket(sender, "GET / HTTP/1.1\r\n");
-        auto [error_reading, error_parsing] { rreader.read_requests(receiver) };
-        REQUIRE((!error_parsing && !error_reading));
+        auto result { rreader.read_requests(receiver) };
+        REQUIRE(result == Http::ReqReaderResult::MAYBE_CAN_READ_MORE);
         REQUIRE(rreader.requests().empty());
     }
 
     SECTION("An invalid request in a buffer")
     {
         send_to_socket(sender, "GET / HTTPx/1.1\r\n");
-        auto [error_reading, error_parsing] { rreader.read_requests(receiver) };
-        REQUIRE((error_parsing && !error_reading));
+        auto result { rreader.read_requests(receiver) };
+        REQUIRE(result == Http::ReqReaderResult::PARSING_ERROR);
         REQUIRE(rreader.requests().empty());
     }
 
     SECTION("Two complete requests in a buffer")
     {
         send_to_socket(sender, "GET / HTTP/1.1\r\n\r\nPOST /take HTTP/1.1\r\n\r\n");
-        auto [error_reading, error_parsing] { rreader.read_requests(receiver) };
-        REQUIRE((!error_parsing && !error_reading));
+        auto result { rreader.read_requests(receiver) };
+        REQUIRE(result == Http::ReqReaderResult::DONE);
         REQUIRE(rreader.requests().size() == 2);
     }
 
     SECTION("Two complete requests and one incomplete in a buffer")
     {
         send_to_socket(sender, "GET / HTTP/1.1\r\n\r\nPOST /take HTTP/1.1\r\n\r\nGET");
-        auto [error_reading, error_parsing] { rreader.read_requests(receiver) };
-        REQUIRE((!error_parsing && !error_reading));
+        auto result { rreader.read_requests(receiver) };
+        REQUIRE(result == Http::ReqReaderResult::MAYBE_CAN_READ_MORE);
         REQUIRE(rreader.requests().size() == 2);
 
         send_to_socket(sender, " /api/1 HTTP/1.1\r\n\r\n");
-        std::tie(error_reading, error_parsing) = rreader.read_requests(receiver);
-        REQUIRE((!error_parsing && !error_reading));
+        result = rreader.read_requests(receiver);
+        REQUIRE(result == Http::ReqReaderResult::DONE);
         REQUIRE(rreader.requests().size() == 3);
     }
 
@@ -70,13 +70,13 @@ TEST_CASE("Request reader test cases", "[http_request_reader]")
     {
         send_to_socket(sender, "GET / HTTP/1.1\r\n\r\n");
 
-        auto [error_reading, error_parsing] { rreader.read_requests(receiver) };
-        REQUIRE((!error_parsing && !error_reading));
+        auto result { rreader.read_requests(receiver) };
+        REQUIRE(result == Http::ReqReaderResult::DONE);
         REQUIRE(rreader.requests().size() == 1);
 
         shutdown(sender.fd(), SHUT_WR);
-        std::tie(error_reading, error_parsing) = rreader.read_requests(receiver);
-        REQUIRE((!error_parsing && error_reading));
+        result = rreader.read_requests(receiver);
+        REQUIRE(result == Http::ReqReaderResult::CLIENT_CLOSED_CONNECTION);
         REQUIRE(rreader.requests().size() == 1);
     }
 

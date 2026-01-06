@@ -3,9 +3,12 @@
 #include "curl/curl.h"
 #include "http/headers.h"
 #include "http/response.h"
+#include "server/context.h"
+#include <cstdint>
 #include <curl/multi.h>
 #include <functional>
 #include <optional>
+#include <unordered_map>
 #include <utility>
 
 namespace Server {
@@ -60,6 +63,7 @@ private:
     CURLM* m_curl_multi;
     server_socket_callback m_server_socket_callback;
     server_timer_callback m_server_timer_callback;
+    std::unordered_map<CURL*, uint64_t> m_registered_handles;
 
     static int socket_callback_trampoline(
         CURL* handle,
@@ -89,6 +93,7 @@ private:
 
     void handle_msgdone(CURLMsg* msg);
     Http::Headers extract_headers(CURL* handle);
+    void cleanup_handle(CURL* handle);
 
 public:
     Requester()
@@ -97,11 +102,23 @@ public:
         , m_curl_multi { nullptr }
         , m_server_socket_callback { nullptr }
         , m_server_timer_callback { nullptr }
+        , m_registered_handles {}
     {
     }
 
+    ~Requester()
+    {
+        for (auto [handle, conn_id] : m_registered_handles) {
+            cleanup_handle(handle);
+        }
+    }
+
     void initialize(server_socket_callback socket_callback, server_timer_callback timer_callback);
-    bool make_request(RequestMethod method, std::string const& url, Http::Headers const& headers, request_done_callback done_callback);
+    bool make_request(RequestContext const& ctx,
+        RequestMethod method,
+        std::string const& url,
+        Http::Headers const& headers,
+        request_done_callback done_callback);
 
     bool is_initialized()
     {
@@ -110,10 +127,10 @@ public:
 
     int drive(int socket_fd = -1, short event = 0);
     void drain_messages();
+    void cleanup_for_connection(uint64_t connection_id);
 
     CurlHandleCtx* get_handle_ctx(CURL* handle);
 };
 
 }
-
 }

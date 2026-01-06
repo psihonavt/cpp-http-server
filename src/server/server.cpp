@@ -1,5 +1,7 @@
 #include "server.h"
 #include "config.h"
+#include "context.h"
+#include "debug_config.h"
 #include "globals.h"
 #include "http/request.h"
 #include "http/response.h"
@@ -10,7 +12,6 @@
 #include "utils/logging.h"
 #include "utils/net.h"
 #include <chrono>
-#include <cstdint>
 #include <curl/multi.h>
 #include <fcntl.h>
 #include <iostream>
@@ -78,7 +79,7 @@ HttpServer create_server(int port)
 
     freeaddrinfo(servinfo);
 
-    LOG_INFO("Listening on {}[{}]: {}", hostname, ip, port);
+    LOG_INFO("Listening on {}[{}]: {}; listening backlog queue {}", hostname, ip, port, LISTEN_BACKLOG);
     return HttpServer(*server_socket);
 }
 
@@ -104,8 +105,11 @@ void HttpServer::establish_connection()
     }
 
     int client_fd { client_socket.fd() };
-    m_connections.emplace(client_fd, client_socket);
-    LOG_INFO("[{}][s:{}] connection established", m_connections.at(client_fd).connection_id, client_fd);
+    m_connections.insert({ client_fd, Connection(client_socket) });
+    auto& conn = m_connections.at(client_fd);
+    conn.set_want_read(true);
+
+    LOG_INFO("[{}][s:{}] connection established", conn.conn_id(), client_fd);
     m_pfds.request_change(PfdsChange { .fd = client_fd, .action = PfdsChangeAction::Add, .events = (POLLHUP | POLLIN), .kind = FdKind::server });
 }
 
@@ -116,35 +120,39 @@ void HttpServer::handle_recv_events(int sender_fd)
         m_pfds.request_change(PfdsChange { .fd = sender_fd, .action = PfdsChangeAction::Remove });
         return;
     }
-    auto& connection { m_connections.at(sender_fd) };
+    auto& conn { m_connections.at(sender_fd) };
+    if (!conn.can_read() && !conn.can_write()) {
+        LOG_WARN("[{}][s:{}] recv_events connection can't write and read. Closing it ...", conn.conn_id(), conn.fd());
+        cancel_connetion(sender_fd);
+        m_pfds.request_change(PfdsChange { .fd = sender_fd, .action = PfdsChangeAction::Remove });
+    }
 
-    if (!connection.read_pending_requests()) {
-        // in the event of failure to read data from the client (connection closed, read error, parsing error), if either:
-        // * there are no pending/ready responses to send
-        // * there is not POLLOUT event on the client socket - there might be a pending response, but the client has already closed the connection
-        // -- close connection on our end as well
-        if (!connection.has_ready_and_potential_responses() || !m_pfds.are_events_set(sender_fd, POLLOUT)) {
-            m_connections.erase(sender_fd);
+    bool done_reading = conn.read_pending_requests();
+
+    if (done_reading) {
+        // if there is nothing to write or we had an error - remove this connection on our end as well
+        if (!conn.can_read() && (!conn.can_write() || !m_pfds.are_events_set(sender_fd, POLLOUT))) {
+            LOG_INFO("[{}][s:{}] recv_events done reading/cant' write or read though. Closing it ...", conn.conn_id(), conn.fd());
+            cancel_connetion(sender_fd);
             m_pfds.request_change(PfdsChange { .fd = sender_fd, .action = PfdsChangeAction::Remove });
-        } else {
-            LOG_INFO("[s:{}] removing a POLLIN event; pr: {}", sender_fd, std::get<0>(connection.req_resp_queue.front()));
-            m_pfds.request_change(PfdsChange { .fd = sender_fd, .action = PfdsChangeAction::RemoveEvents, .events = POLLIN });
+            return;
         }
-        return;
-    } else {
-        LOG_INFO("[{}][s:{}] read {} requests", connection.connection_id, sender_fd, connection.request_reader.requests().size());
-        for (auto& request : connection.request_reader.requests()) {
-            auto request_id = generate_id();
-            LOG_INFO("[{}][s:{}] Got HTTP r:{} {} {}?{}", connection.connection_id, sender_fd, request_id, request.method, request.uri.path, request.uri.query);
-            auto response = handle_request(request_id, request);
-            connection.req_resp_queue.push_back({ request_id, std::move(request), std::move(response) });
-            m_request_to_client_fd[request_id] = connection.client.fd();
-        }
-        connection.clear_pending_requests();
 
-        if (connection.has_ready_to_serve_response()) {
+        LOG_INFO("[{}][s:{}] read {} requests", conn.conn_id(), conn.fd(), conn.pending_requests().size());
+        for (auto& request : conn.pending_requests()) {
+            auto request_id = generate_id();
+            LOG_INFO("[{}][s:{}] Got HTTP r:{} {} {}?{}", conn.conn_id(), conn.fd(), request_id, request.method, request.uri.path, request.uri.query);
+            m_registered_ctxs[conn.conn_id()].push_back(RequestContext(request_id, conn, get_response_ready_cb()));
+            auto response = handle_request(m_registered_ctxs.at(conn.conn_id()).back(), request);
+            conn.queue_request_response(request_id, request, response);
+        }
+        conn.clear_pending_requests();
+
+        if (conn.has_more_to_write()) {
+            conn.set_want_wrire(true);
             m_pfds.request_change(PfdsChange { .fd = sender_fd, .action = PfdsChangeAction::AddEvents, .events = POLLOUT });
         }
+
         return;
     }
 }
@@ -157,23 +165,27 @@ void HttpServer::handle_send_events(int receiver_fd)
         return;
     }
 
-    auto& connection { m_connections.at(receiver_fd) };
+    auto& conn { m_connections.at(receiver_fd) };
 
-    if (connection.req_resp_queue.empty() && !connection.cur_response_writer) {
-        LOG_WARN("socket {} got POLLOUT but there is nothing to send ...", receiver_fd);
+    if (!conn.can_write() && !conn.can_read()) {
+        LOG_WARN("[{}][s:{}] recv_events connection can't write and read. Closing it ...", conn.conn_id(), conn.fd());
+        cancel_connetion(receiver_fd);
+        m_pfds.request_change(PfdsChange { .fd = receiver_fd, .action = PfdsChangeAction::Remove });
         return;
     }
 
-    if (connection.is_sending()) {
-        bool is_success = connection.send_pending();
+    if (conn.has_more_to_write()) {
+        bool is_success = conn.write_pending();
         if (!is_success) {
-            m_connections.erase(receiver_fd);
+            LOG_WARN("[{}][s:{}] send_events failed to write a response. Closing it ...", conn.conn_id(), conn.fd());
+            cancel_connetion(receiver_fd);
             m_pfds.request_change(PfdsChange { .fd = receiver_fd, .action = PfdsChangeAction::Remove });
             return;
         }
 
-        if (!connection.is_sending()) {
-            LOG_INFO("[{}][s:{}] the entire response was sent", connection.connection_id, receiver_fd);
+        if (!conn.has_more_to_write()) {
+            LOG_INFO("[{}][s:{}] the entire response was sent. rrq: {}", conn.conn_id(), conn.fd(), conn.request_response_queue().size());
+            conn.set_want_wrire(false);
             m_pfds.request_change(PfdsChange { .fd = receiver_fd, .action = PfdsChangeAction::RemoveEvents, .events = POLLOUT });
             return;
         }
@@ -184,13 +196,19 @@ void HttpServer::handle_send_events(int receiver_fd)
 
 void HttpServer::process_connections(int poll_count)
 {
-    // LOG_DEBUG("polling {} fds right now", m_pfds.all().size());
-    // LOG_DEBUG("{}", m_pfds.debug_print());
+    IF_VERBOSE
+    {
+        LOG_DEBUG("polling {} fds right now", m_pfds.all().size());
+        LOG_DEBUG("{}", m_pfds.debug_print());
+    }
     if (poll_count > 0) {
         for (auto const& pfd : m_pfds.all()) {
 
             auto fd_kind = m_pfds.get_kind(pfd.fd);
-            LOG_INFO("[s:{}k{}] e:{}; re:{}", pfd.fd, static_cast<int>(fd_kind), pfd.events, pfd.revents);
+            IF_VERBOSE
+            {
+                LOG_DEBUG("[s:{}k{}] e:{}; re:{}", pfd.fd, static_cast<int>(fd_kind), pfd.events, pfd.revents);
+            }
 
             if (fd_kind == FdKind::server) {
                 if (pfd.revents & (POLLIN | POLLHUP)) {
@@ -212,14 +230,10 @@ void HttpServer::process_connections(int poll_count)
             }
         }
     } else {
-        // LOG_DEBUG("before requester driving {}", m_pfds.debug_print());
         m_http_requester.drive();
-        // LOG_DEBUG("after requester driving {}", m_pfds.debug_print());
     }
-    // LOG_DEBUG("before processing changes {}", m_pfds.debug_print());
-    // LOG_DEBUG("before processing changes: {}", m_pfds.debug_print());
     m_pfds.process_changes();
-    // LOG_DEBUG("m_pfds processed changes for: {}", changed_fds);
+    cleanup_connections();
 }
 
 void HttpServer::drive(int timeout_ms)
@@ -284,12 +298,12 @@ void HttpServer::mount_handler(std::string const& path, IRequestHandler& handler
     m_handlers.emplace(path, handler);
 }
 
-std::optional<Http::Response> HttpServer::handle_request(uint64_t request_id, Http::Request const& request)
+std::optional<Http::Response> HttpServer::handle_request(RequestContext const& ctx, Http::Request const& request)
 {
     std::optional<Http::Response> response = Http::Response(Http::StatusCode::NOT_FOUND);
     for (auto const& [path, handler] : m_handlers) {
         if (request.uri.path.starts_with(path)) {
-            response = handler.get().handle_request(request_id, request);
+            response = handler.get().handle_request(ctx, request);
             break;
         }
     }
@@ -305,28 +319,26 @@ void HttpServer::set_server_headers(Http::Response& response)
     response.headers.set("Date", Http::Utils::get_current_date());
 }
 
-void HttpServer::notify_response_ready(uint64_t request_id, Http::Response& response)
+void HttpServer::notify_response_ready(RequestContext const& ctx, Http::Response& response)
 {
+    auto request_id = ctx.request_id();
+    auto client_fd = ctx.conn_fd();
     LOG_INFO("A response to request {} is ready", request_id);
-    if (!m_request_to_client_fd.contains(request_id)) {
-        LOG_WARN("got notification about non-existing request {}", request_id);
+    if (!m_registered_ctxs.contains(ctx.conn_id())) {
+        LOG_WARN("[s:{}] got unregistered ctx r:{}", client_fd, request_id);
+    } else if (!m_connections.contains(client_fd)) {
+        LOG_WARN("[s:{}] no active connection for request {}", client_fd, request_id);
     } else {
-        auto const& client_fd { m_request_to_client_fd.at(request_id) };
-        if (!m_connections.contains(client_fd)) {
-            LOG_WARN("[s:{}] no action connection for request {}", client_fd, request_id);
-        } else {
-            for (auto& [req_id, request, resp] : m_connections.at(client_fd).req_resp_queue) {
-                if (req_id == request_id) {
-                    if (resp) {
-                        LOG_WARN("[s:{}] request {} already has a ready-to-send response", client_fd, request_id);
-                    } else {
-                        LOG_INFO("[s:{}] moving a read-to-send resposne for a request {}", client_fd, request_id);
-                        // set_server_headers(response);
-                        resp = std::move(response);
-                        m_pfds.request_change(PfdsChange { client_fd, PfdsChangeAction::AddEvents, POLLOUT });
-                        m_request_to_client_fd.erase(request_id);
-                        return;
-                    }
+        for (auto& [req_id, request, resp] : m_connections.at(client_fd).request_response_queue()) {
+            if (req_id == request_id) {
+                if (resp) {
+                    LOG_WARN("[s:{}] request {} already has a ready-to-send response", client_fd, request_id);
+                } else {
+                    LOG_INFO("[s:{}] moving a read-to-send resposne for a request {}", client_fd, request_id);
+                    // set_server_headers(response);
+                    resp = std::move(response);
+                    m_connections.at(client_fd).set_want_wrire(true);
+                    m_pfds.request_change(PfdsChange { client_fd, PfdsChangeAction::AddEvents, POLLOUT });
                 }
             }
         }
@@ -344,18 +356,25 @@ size_t HttpServer::arm_polling_timer(long timeout_ms)
 
 int HttpServer::requester_socket_fn_cb([[maybe_unused]] CURL* handle, curl_socket_t s, int what)
 {
-    // if (handle) {
-    //     auto ctx = m_http_requester.get_handle_ctx(handle);
-    //     LOG_DEBUG("[s:{}] socket fn for url {}", s, ctx->url);
-    // }
+    IF_VERBOSE
+    {
+        if (handle) {
+            auto ctx = m_http_requester.get_handle_ctx(handle);
+            LOG_DEBUG("[s:{}] socket fn for url {}:{}", s, handle, ctx->url);
+        }
+        LOG_DEBUG("[s:{}] socket fn for {}", s, what);
+    }
 
-    LOG_DEBUG("[s:{}] socket fn for {}", s, what);
     if (what == CURL_POLL_REMOVE) {
         if (m_pfds.has_fd(s)) {
-            LOG_DEBUG("[s:{}] CURL_POLL_REMOVE for the socket. Removing ...", s);
+            LOG_DEBUG("[s:{}] CURL_POLL_REMOVE for the socket. ", s);
             m_pfds.request_change(PfdsChange { s, PfdsChangeAction::Remove });
         } else {
-            LOG_WARN("[s:{}] CURL_POLL_REMOVE for an unregistered socket", s);
+            // if we're in this branch, it mean that libcurl has spawned a socket earlier (and we requested the "Add to m_pfds" change for it)
+            // however, as of now, libcurl no longer needs this socket (and it all happens withing the same server's drive iteration ) -
+            // we need to undo all requested changes for this socket (so we don't accidentally add it to our PfsHodler where it isn't needed).
+            LOG_DEBUG("[s:{}] CURL_POLL_REMOVE for an unregistered socket. Undo changes just in case", s);
+            m_pfds.undo_change(s);
         }
         return 0;
     }
@@ -377,4 +396,19 @@ int HttpServer::requester_socket_fn_cb([[maybe_unused]] CURL* handle, curl_socke
     }
     return 0;
 }
+
+void HttpServer::cancel_connetion(int fd)
+{
+    if (m_connections.contains(fd)) {
+        auto& conn = m_connections.at(fd);
+        m_http_requester.cleanup_for_connection(conn.conn_id());
+        m_registered_ctxs.erase(conn.conn_id());
+        m_connections_pending_cleanup.emplace_back(std::move(conn));
+        m_connections.erase(fd);
+    } else {
+        LOG_WARN("[s:{}] request to cancel non-existing connection", fd);
+    }
+}
+
+void HttpServer::cleanup_connections() { m_connections_pending_cleanup.clear(); }
 }

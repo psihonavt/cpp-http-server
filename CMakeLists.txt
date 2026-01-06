@@ -35,6 +35,18 @@ endif()
 
 find_package(CURL REQUIRED)
 
+OPTION(VERBOSE_DEBUG "Enable versbose debug information" OFF)
+if(VERBOSE_DEBUG)
+  set(VERBOSE_DEBUG_VALUE true)
+else()
+  set(VERBOSE_DEBUG_VALUE false)
+endif()
+
+configure_file(
+  ${CMAKE_SOURCE_DIR}/src/include/debug_config.h.in
+  ${CMAKE_BINARY_DIR}/generated/debug_config.h
+)
+
 add_executable(server
   src/main.cpp
 )
@@ -55,8 +67,10 @@ add_library(utils STATIC
   src/server/client.cpp
   src/server/signals.cpp
   src/server/handlers.cpp
+  src/server/context.cpp
 )
 target_include_directories(utils PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(utils PUBLIC ${CMAKE_BINARY_DIR}/generated)
 target_link_libraries(utils PRIVATE CURL::libcurl)
 
 include(FetchContent)

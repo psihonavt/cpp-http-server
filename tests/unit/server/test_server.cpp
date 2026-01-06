@@ -2,15 +2,17 @@
 #include "http/request.h"
 #include "http/response.h"
 #include "misc/helpers.h"
+#include "server/context.h"
 #include "server/server.h"
+#include "utils/helpers.h"
 #include "utils/net.h"
 #include <cerrno>
-#include <cstdint>
 #include <cstring>
 #include <format>
+#include <functional>
+#include <iomanip>
 #include <netinet/in.h>
 #include <optional>
-#include <sstream>
 #include <string>
 #include <sys/fcntl.h>
 #include <sys/socket.h>
@@ -56,10 +58,38 @@ Http::Request make_request(std::string const& path, std::string const& method = 
     return req;
 }
 
+void drive_server_while_get_response(
+    Server::HttpServer& server,
+    Socket& client,
+    std::vector<std::string> expected_responses,
+    int attempts = 10)
+{
+    REQUIRE(!expected_responses.empty());
+    std::string response {};
+    while (attempts >= 0) {
+        server.drive(1);
+        response.append(fdread(client.fd()));
+
+        bool contais_all { true };
+        for (auto& er : expected_responses) {
+            if (!response.contains(er)) {
+                contais_all = false;
+                break;
+            }
+        }
+
+        if (contais_all) {
+            return;
+        }
+        attempts -= 1;
+    }
+    FAIL("Didn't get the expected response: " << str_vector_join(expected_responses, ", ") << " in " << std::quoted(response));
+}
+
 class DummyHandler : public Server::IRequestHandler {
 public:
     std::optional<Http::Response> handle_request(
-        [[maybe_unused]] uint64_t request_id,
+        [[maybe_unused]] Server::RequestContext const& ctx,
         Http::Request const& request) const
     {
         return Http::Response(Http::StatusCode::OK, get_content(request), "plain/text");
@@ -73,26 +103,20 @@ public:
 
 class ResponseNotReadyHandler : public Server::IRequestHandler {
 public:
-    mutable std::vector<uint64_t> request_ids;
+    mutable std::vector<std::reference_wrapper<Server::RequestContext const>> contexts;
     mutable Server::server_response_ready_cb ready_cb;
 
-    ResponseNotReadyHandler(Server::server_response_ready_cb cb)
-        : request_ids {}
-        , ready_cb { cb }
+    ResponseNotReadyHandler()
+        : contexts {}
     {
     }
 
     std::optional<Http::Response> handle_request(
-        uint64_t request_id,
+        Server::RequestContext const& ctx,
         [[maybe_unused]] Http::Request const& request) const
     {
-        request_ids.push_back(request_id);
+        contexts.push_back(ctx);
         return {};
-    }
-
-    void response_ready(uint64_t request_id, Http::Response& response)
-    {
-        ready_cb(request_id, response);
     }
 };
 
@@ -103,9 +127,8 @@ TEST_CASE("It routes requests", "[http_server]")
     SECTION("Unknown request path returns 404")
     {
         auto req { make_request("/a/b/c") };
-        auto resp { server.handle_request(1, req) };
-        REQUIRE(resp);
-        REQUIRE(resp->status == Http::StatusCode::NOT_FOUND);
+        fdsend_http_request(client.fd(), req);
+        drive_server_while_get_response(server, client, { "HTTP/1.1 404 Not Found" });
     }
 
     SECTION("It routes a request")
@@ -113,11 +136,8 @@ TEST_CASE("It routes requests", "[http_server]")
         DummyHandler handler {};
         server.mount_handler("/dummy", handler);
         auto req { make_request("/dummy/you/are") };
-        auto resp { server.handle_request(1, req) };
-        REQUIRE(resp);
-        REQUIRE(resp->status == Http::StatusCode::OK);
-        auto expected_content = dynamic_cast<std::stringstream*>(resp->body->content.get())->str();
-        REQUIRE(expected_content == handler.get_content(req));
+        fdsend_http_request(client.fd(), req);
+        drive_server_while_get_response(server, client, { "HTTP/1.1 200 OK" });
     }
 }
 
@@ -127,12 +147,9 @@ TEST_CASE("It adds mandatory server headers", "[http_server]")
 
     SECTION("It always includes Server and Date headers")
     {
-        auto req { make_request("/a/b/c") };
-        auto resp { server.handle_request(1, req) };
-        REQUIRE(resp);
-        REQUIRE(resp->status == Http::StatusCode::NOT_FOUND);
-        REQUIRE(resp->headers.has("Server"));
-        REQUIRE(resp->headers.has("Date"));
+        auto req { make_request("/something") };
+        fdsend_http_request(client.fd(), req);
+        drive_server_while_get_response(server, client, { "HTTP/1.1 404 Not Found", "Server:", "Date:" });
     }
 }
 
@@ -155,7 +172,7 @@ TEST_CASE("It returns 404 Not Found without handlers mounted", "[http_server]")
 TEST_CASE("It handles not-yet-ready responses", "[http_server]")
 {
     auto [server, client] { make_server_and_connect_client() };
-    ResponseNotReadyHandler handler { server.get_response_ready_cb() };
+    ResponseNotReadyHandler handler {};
     server.mount_handler("/a", handler);
 
     fdsend(client.fd(), "GET /a/1 HTTP/1.1\r\n\r\n");
@@ -166,6 +183,7 @@ TEST_CASE("It handles not-yet-ready responses", "[http_server]")
         attempts -= 1;
     }
     fdsend(client.fd(), "GET /a/2 HTTP/1.1\r\n\r\n");
+    server.drive(1);
 
     attempts = 10;
     while (attempts >= 0) {
@@ -175,7 +193,7 @@ TEST_CASE("It handles not-yet-ready responses", "[http_server]")
     }
 
     auto response2 { Http::Response(Http::StatusCode::OK, "response2") };
-    handler.response_ready(handler.request_ids[1], response2);
+    handler.contexts[1].get().response_is_ready(response2);
 
     // the first response is still not ready;
     // the server won't return the second "ready-to-send" response while the first one is still pending
@@ -187,7 +205,7 @@ TEST_CASE("It handles not-yet-ready responses", "[http_server]")
     }
 
     auto response1 { Http::Response(Http::StatusCode::OK, "response1") };
-    handler.response_ready(handler.request_ids[0], response1);
+    handler.contexts[0].get().response_is_ready(response1);
 
     std::string server_response {};
     attempts = 10;

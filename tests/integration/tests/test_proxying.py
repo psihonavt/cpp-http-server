@@ -16,6 +16,7 @@ def test_it_proxies_responses(
 ):
     for _, _, filenames in server_root.walk():
         for filename in filenames:
+            print("proxying a request to", filename)
             original_response = requests.get(f"{server_url}/{filename}")
             proxied_response = requests.get(f"{proxying_server_url}/{filename}")
             assert original_response.ok and proxied_response.ok
@@ -25,10 +26,14 @@ def test_it_proxies_responses(
 @pytest.mark.skipif(
     os.environ.get("LOAD_TESTING") != "1", reason="env variable LOAD_TESTING not set"
 )
-def test_it_proxies_a_lot(proxying_server, proxying_server_url, server_root):
+def test_it_proxies_a_lot(
+    proxying_server,
+    proxying_server_url,
+    server_root,
+):
     filenames = next(server_root.walk())[2]
-    concurrent_requests_num = 60
-    requests_num = 600
+    concurrent_requests_num = 120
+    requests_num = 6000
     urls = [
         "{}/{}?seq={}".format(proxying_server_url, random.choice(filenames), idx)
         for idx in range(requests_num)
