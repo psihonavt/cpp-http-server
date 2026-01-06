@@ -31,6 +31,7 @@ struct Headers {
 
     std::vector<std::string> const get(std::string const& field) const;
     void set(std::string const& field, std::string const& value);
+    void unset(std::string const& field);
     void set_content_range(size_t content_length, ContentRange const& range);
     void override(std::string const& field, std::string const& value);
 

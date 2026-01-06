@@ -1,81 +1,41 @@
 #pragma once
 
+#include "client.h"
+#include "context.h"
+#include "globals.h"
 #include "handlers.h"
-#include "http/req_reader.h"
 #include "http/request.h"
 #include "http/response.h"
-#include "utils/logging.h"
 #include "utils/net.h"
-#include <deque>
+#include <cstdint>
+#include <curl/curl.h>
 #include <functional>
+#include <limits>
+#include <list>
+#include <optional>
+#include <queue>
+#include <stdexcept>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace Server {
 
-class Connection {
-public:
-    Socket client;
-    long long connection_id;
+struct ServeStrategy {
+    static int const INFINITE_CAP = std::numeric_limits<int>::max();
 
-    std::deque<std::pair<Http::Request, Http::Response>> req_resp_queue;
-    std::optional<Http::ResponseWriter> cur_response_writer;
-    Http::RequestReader request_reader;
+    std::vector<int> used_timeouts;
+    int drives_cap;
+    int default_poll_timeout;
 
-    Connection(Socket& cl)
-        : client { std::move(cl) }
-        , req_resp_queue {}
-        , cur_response_writer { std::nullopt }
-        , request_reader {}
+    bool serve_infitine() const
     {
-        connection_id = std::chrono::system_clock::now().time_since_epoch().count();
+        return drives_cap == INFINITE_CAP;
     }
 
-    bool is_sending()
+    static ServeStrategy make_infinite_strategy()
     {
-        if (cur_response_writer && !cur_response_writer->is_done()) {
-            return true;
-        }
-        if (!req_resp_queue.empty()) {
-            return true;
-        }
-        return false;
-    }
-
-    bool send_pending()
-    {
-        if (!is_sending()) {
-            LOG_ERROR("[{}][s:{}] Connection isn't sending data", connection_id, client.fd());
-            return false;
-        }
-
-        if (!cur_response_writer) {
-            auto& [request, response] { req_resp_queue.front() };
-            cur_response_writer.emplace(std::move(response), client, request.headers);
-            req_resp_queue.pop_front();
-        }
-
-        auto maybe_erorr { cur_response_writer->write() };
-        if (maybe_erorr) {
-            LOG_ERROR("[{}][s:{}] Error writing response: {}", connection_id, client.fd(), maybe_erorr->message());
-            return false;
-        }
-
-        if (cur_response_writer->is_done()) {
-            cur_response_writer.reset();
-        }
-        return true;
-    }
-
-    bool read_pending_requests()
-    {
-        auto [error_reading, error_parsing] { request_reader.read_requests(client) };
-        return !(error_reading || error_parsing);
-    }
-
-    void clear_pending_requests()
-    {
-        request_reader.erase_requests();
+        return ServeStrategy { {}, INFINITE_CAP, -1 };
     }
 };
 
@@ -83,14 +43,29 @@ class HttpServer {
 private:
     Socket m_socket;
     std::unordered_map<int, Connection> m_connections;
+    std::vector<Connection> m_connections_pending_cleanup;
     PfdsHolder m_pfds;
     std::unordered_map<std::string, std::reference_wrapper<IRequestHandler>> m_handlers;
+    std::unordered_map<uint64_t, std::list<RequestContext>> m_registered_ctxs;
+    HttpClient::Requester m_http_requester;
 
-    std::optional<PfdsChange> establish_connection();
-    std::optional<PfdsChange> handle_recv_events(int sender_fd);
-    std::optional<PfdsChange> handle_send_events(int receiver_fd);
-    void process_connections();
+    std::priority_queue<time_point, std::vector<time_point>, std::greater<time_point>> m_armed_timers {};
+
+    void establish_connection();
+    void handle_recv_events(int sender_fd);
+    void handle_send_events(int receiver_fd);
+    void process_connections(int poll_count);
     void set_server_headers(Http::Response& response);
+    void disarm_due_timers();
+    int requester_socket_fn_cb(CURL* handle, curl_socket_t s, int what);
+    void notify_response_ready(RequestContext const& ctx, Http::Response& response);
+
+    auto get_response_ready_cb()
+    {
+        return [this](RequestContext const& ctx, Http::Response& response) {
+            return this->notify_response_ready(ctx, response);
+        };
+    }
 
 public:
     HttpServer(Socket& socket)
@@ -98,12 +73,37 @@ public:
         , m_connections {}
         , m_pfds {}
         , m_handlers {}
+        , m_registered_ctxs {}
+        , m_http_requester {}
     {
+        m_pfds.request_change(PfdsChange { .fd = m_socket, .action = PfdsChangeAction::Add, .events = POLLIN });
+        m_pfds.request_change(PfdsChange { .fd = Globals::s_signal_pipe_rfd, .action = PfdsChangeAction::Add, .events = POLLIN });
+        m_pfds.process_changes();
+
+        auto socket_fn = [this](CURL* handle, curl_socket_t s, int what) { return this->requester_socket_fn_cb(handle, s, what); };
+        auto arm_timer_fn = [this](long timeout_ms) { return this->arm_polling_timer(timeout_ms); };
+        m_http_requester.initialize(socket_fn, arm_timer_fn);
+
+        if (!m_http_requester.is_initialized()) {
+            throw std::runtime_error("error initializing the HTTP requester.");
+        }
     }
 
-    void serve();
+    size_t arm_polling_timer(long timeout_ms);
+
+    void serve(ServeStrategy& strategy);
+    void drive(int timeout_ms);
     void mount_handler(std::string const& path, IRequestHandler& handler);
-    Http::Response handle_request(Http::Request const& request);
+
+    std::optional<Http::Response> handle_request(RequestContext const& ctx, Http::Request const& request);
+
+    HttpClient::Requester& http_requester()
+    {
+        return m_http_requester;
+    }
+
+    void cancel_connetion(int fd);
+    void cleanup_connections();
 };
 
 HttpServer create_server(int port);

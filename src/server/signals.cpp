@@ -78,7 +78,7 @@ void handle_signal_event()
     LOG_INFO("GOT A SIGNAL FROM THE KERNEL: {}", strsignal(signum));
     close(Server::Globals::s_signal_pipe_rfd);
     close(Server::Globals::s_signal_pipe_wfd);
-    // std::exit(1);
+    std::exit(1);
 }
 
 }

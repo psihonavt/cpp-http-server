@@ -33,6 +33,20 @@ else()
   set(MY_SANITIZING_FLAGS)
 endif()
 
+find_package(CURL REQUIRED)
+
+OPTION(VERBOSE_DEBUG "Enable versbose debug information" OFF)
+if(VERBOSE_DEBUG)
+  set(VERBOSE_DEBUG_VALUE true)
+else()
+  set(VERBOSE_DEBUG_VALUE false)
+endif()
+
+configure_file(
+  ${CMAKE_SOURCE_DIR}/src/include/debug_config.h.in
+  ${CMAKE_BINARY_DIR}/generated/debug_config.h
+)
+
 add_executable(server
   src/main.cpp
 )
@@ -50,10 +64,14 @@ add_library(utils STATIC
   src/http/mime.cpp
   src/http/utils.cpp
   src/server/server.cpp
+  src/server/client.cpp
   src/server/signals.cpp
   src/server/handlers.cpp
+  src/server/context.cpp
 )
 target_include_directories(utils PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(utils PUBLIC ${CMAKE_BINARY_DIR}/generated)
+target_link_libraries(utils PRIVATE CURL::libcurl)
 
 include(FetchContent)
 
@@ -87,12 +105,24 @@ add_executable(unit_tests
   tests/unit/http/test_mime.cpp
   tests/unit/http/test_urls.cpp
   tests/unit/server/test_server.cpp
+  tests/unit/misc/helpers.cpp
   tests/unit/main.cpp
 )
 
 target_compile_options(unit_tests PRIVATE ${MY_COMPILE_FLAGS} ${MY_SANITIZING_FLAGS})
 target_link_options(unit_tests PRIVATE ${MY_SANITIZING_FLAGS})
 target_link_libraries(unit_tests PRIVATE utils Catch2::Catch2)
+target_include_directories(unit_tests PRIVATE ${CMAKE_SOURCE_DIR}/tests/unit)
+
+#### cpptrace ####
+FetchContent_Declare(
+  cpptrace
+  GIT_REPOSITORY https://github.com/jeremy-rifkin/cpptrace.git
+  GIT_TAG        v1.0.4 # <HASH or TAG>
+)
+FetchContent_MakeAvailable(cpptrace)
+target_link_libraries(utils PUBLIC cpptrace::cpptrace)
+
 
 include(CTest)
 include(Catch)

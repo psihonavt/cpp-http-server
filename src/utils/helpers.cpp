@@ -1,7 +1,8 @@
 #include "utils/helpers.h"
 #include <algorithm>
+#include <atomic>
 #include <charconv>
-#include <iostream>
+#include <cstdint>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -65,4 +66,10 @@ std::vector<std::string> str_split(std::string const& s, std::string const& deli
         tokens.emplace_back("");
     }
     return tokens;
+}
+
+uint64_t generate_id()
+{
+    static std::atomic<uint64_t> id_counter { 0 };
+    return id_counter.fetch_add(1);
 }

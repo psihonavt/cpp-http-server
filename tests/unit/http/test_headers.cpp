@@ -18,6 +18,10 @@ TEST_CASE("HTTP Headers struct tests", "[http_headers]")
     REQUIRE(headers.get("Host") == std::vector<std::string> { "a-new-host" });
     headers.override("HOST", "");
     REQUIRE(headers.get("Host") == std::vector<std::string> { "" });
+
+    headers.unset("non-existing-headers");
+    headers.unset("host");
+    REQUIRE(!headers.has("host"));
 }
 
 TEST_CASE("HTTP Headers comparison", "[http_headers]")

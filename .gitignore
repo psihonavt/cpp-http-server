@@ -8,3 +8,4 @@ compile_commands.json
 .venv
 .pytest_cache
 __pycache__
+tests/*.log

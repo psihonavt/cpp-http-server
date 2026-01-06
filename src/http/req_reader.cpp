@@ -10,50 +10,53 @@
 
 namespace Http {
 
-read_requests_result RequestReader::read_requests(Socket const& client)
+ReqReaderResult RequestReader::read_requests(Socket const& client)
 {
-    bool error_reading { false };
-    bool error_parsing { false };
-
     char buffer[PARSER_MAX_READ_BUF_LEN];
+    RequestParsingStatus parsing_status;
 
     while (true) {
         auto n = recv(client.fd(), buffer, PARSER_MAX_READ_BUF_LEN, 0);
         if (n == 0) {
             LOG_DEBUG("[s:{}] closed connection", client.fd());
-            error_reading = true;
-            break;
+            return ReqReaderResult::CLIENT_CLOSED_CONNECTION;
         } else if (n < 0) {
             auto ec { std::error_code(errno, std::generic_category()) };
-            LOG_WARN("[s:{}] recv error {}({})", client.fd(), ec.message(), ec.value());
             if (ec != std::errc::operation_would_block && ec != std::errc::resource_unavailable_try_again) {
-                error_reading = true;
+                LOG_WARN("[s:{}] recv error {}({})", client.fd(), ec.message(), ec.value());
+                return ReqReaderResult::READING_ERROR;
+            } else {
+                return (parsing_status == RequestParsingStatus::Finished) ? ReqReaderResult::DONE : ReqReaderResult::MAYBE_CAN_READ_MORE;
             }
-            break;
         }
 
         size_t offset { 0 };
-        while (!error_reading) {
-            auto status = m_parser.parse_request(buffer, static_cast<size_t>(n), offset);
-            if (status == RequestParsingStatus::NeedMoreData) {
-                break;
-            } else if (status == RequestParsingStatus::Error) {
-                error_parsing = true;
-                break;
-            } else if (status == RequestParsingStatus::Finished) {
+        bool parsing_in_progress { true };
+        while (parsing_in_progress) {
+            parsing_status = m_parser.parse_request(buffer, static_cast<size_t>(n), offset);
+            if (parsing_status == RequestParsingStatus::NeedMoreData) {
+                parsing_in_progress = false;
+            } else if (parsing_status == RequestParsingStatus::Error) {
+                return ReqReaderResult::PARSING_ERROR;
+            } else if (parsing_status == RequestParsingStatus::Finished) {
                 m_requests.push_back(std::move(m_parser.result));
+
                 if (m_parser.bytes_read < static_cast<size_t>(n)) {
                     offset = m_parser.bytes_read;
                     m_parser.init();
-                } else {
-                    m_parser.init();
-                    break;
+                    continue;
                 }
+
+                m_parser.init();
+                parsing_in_progress = false;
             }
         }
-    }
 
-    return { error_reading, error_parsing };
+        if (n < PARSER_MAX_READ_BUF_LEN) {
+            break;
+        }
+    }
+    return (parsing_status == RequestParsingStatus::Finished) ? ReqReaderResult::DONE : ReqReaderResult::MAYBE_CAN_READ_MORE;
 }
 
 }

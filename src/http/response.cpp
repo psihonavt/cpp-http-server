@@ -1,5 +1,6 @@
 #include "response.h"
 #include "config.h"
+#include "debug_config.h"
 #include "errors.h"
 #include "http/headers.h"
 #include "utils/helpers.h"
@@ -21,7 +22,7 @@ namespace Http {
 
 StatusCode ResponseWriter::get_adjusted_status()
 {
-    if (m_response.headers.has(Headers::ACCEPT_RANGES_HEADER_NAME)) {
+    if (m_response.status != StatusCode::PARTIAL_CONTENT && m_response.headers.has(Headers::ACCEPT_RANGES_HEADER_NAME)) {
         auto maybe_range = m_request_headers.get_range();
         if (maybe_range) {
             if ((maybe_range = adjust_range_to_body(*maybe_range)); maybe_range) {
@@ -144,7 +145,6 @@ response_write_result ResponseWriter::write_body()
     }
 
     if (!m_response.body) {
-        LOG_DEBUG("{} no resp body; writing is done", m_recipient.fd());
         m_status = Status::WRITING_DONE;
         return std::nullopt;
     }
@@ -184,23 +184,32 @@ response_write_result ResponseWriter::write_body()
 
     // done sending
     if (m_body_buff_size == 0) {
-        LOG_DEBUG("{} done sending", m_recipient.fd());
+        LOG_DEBUG("[s:{}] done sending", m_recipient.fd());
         m_status = Status::WRITING_DONE;
         return std::nullopt;
     }
 
-    LOG_DEBUG("[s:{}] Attempting to send ... {}", m_recipient.fd(), m_body_buff_size - m_body_buff_sent);
+    IF_VERBOSE
+    {
+        LOG_DEBUG("[s:{}] Attempting to send ... {}", m_recipient.fd(), m_body_buff_size - m_body_buff_sent);
+    }
     ssize_t sent = send(m_recipient.fd(), m_body_buff.get() + m_body_buff_sent, m_body_buff_size - m_body_buff_sent, 0);
     if (sent < 0) {
         if (errno == EWOULDBLOCK || errno == EAGAIN) {
-            LOG_DEBUG("IN EWOULDBLOCK OR EAGAIN? {}", errno);
             return std::nullopt;
         } else {
             return std::error_code { errno, std::generic_category() };
         }
     }
     m_body_buff_sent += static_cast<size_t>(sent);
-    LOG_DEBUG("[s:{}] bytes sent ... {}", m_recipient.fd(), sent);
+    IF_VERBOSE
+    {
+        LOG_DEBUG("[s:{}] bytes sent ... {}", m_recipient.fd(), sent);
+    }
+    // if the current chunk is done, attempt to send the next one immediately
+    if (m_body_buff_sent == m_body_buff_size) {
+        return write_body();
+    }
     return std::nullopt;
 }
 
@@ -247,5 +256,4 @@ size_t ResponseWriter::calculate_headers_size()
     total_size += rn_size;
     return total_size;
 }
-
 }
