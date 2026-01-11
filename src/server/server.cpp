@@ -214,8 +214,8 @@ void HttpServer::process_connections(int poll_count)
                 if (pfd.revents & (POLLIN | POLLHUP)) {
                     if (pfd.fd == m_socket) {
                         establish_connection();
-                    } else if (pfd.fd == Globals::s_signal_pipe_rfd) {
-                        handle_signal_event();
+                    } else if (pfd.fd == Globals::server_sigpipe.read_end()) {
+                        handle_termination_signals();
                     } else {
                         handle_recv_events(pfd.fd);
                     }
@@ -242,7 +242,7 @@ void HttpServer::drive(int timeout_ms)
     if (poll_count == -1) {
         LOG_ERROR("Polling failed: {}", strerror(errno));
         // maybe there is something in our signal pipe, read and display it
-        handle_signal_event();
+        handle_termination_signals();
         std::exit(1);
     }
 

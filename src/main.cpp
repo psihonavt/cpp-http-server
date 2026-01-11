@@ -1,7 +1,6 @@
 #include "CLI/CLI.hpp"
 #include "debug_config.h"
 #include "server/config.h"
-#include "server/globals.h"
 #include "server/handlers.h"
 #include "server/server.h"
 #include "server/signals.h"
@@ -45,11 +44,6 @@ int main(int argc, char** argv)
     }
     Server::setup_signal_handling();
 
-    if (Server::Globals::s_signal_pipe_rfd == -1) {
-        LOG_ERROR("read signal pipe must be initialized.");
-        return 1;
-    }
-
     rlimit rlim;
     getrlimit(RLIMIT_NOFILE, &rlim);
     rlim.rlim_cur = ulimit;
@@ -59,8 +53,7 @@ int main(int argc, char** argv)
     }
     getrlimit(RLIMIT_NOFILE, &rlim);
 
-    LOG_INFO("Starting the server (rlimits {}/{}; signal pipe: {}:{}) ...",
-        rlim.rlim_cur, rlim.rlim_max, Server::Globals::s_signal_pipe_rfd, Server::Globals::s_signal_pipe_wfd);
+    LOG_INFO("Starting the server (rlimits {}/{}) ...", rlim.rlim_cur, rlim.rlim_max);
     auto server { Server::create_server(port) };
 
     std::optional<Server::StaticRootHandler> sr_handler;

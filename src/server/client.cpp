@@ -19,7 +19,7 @@
 namespace Server {
 
 namespace HttpClient {
-void Requester::initialize(server_socket_callback socket_callback, server_timer_callback timer_callback)
+void Requester::initialize(server_socket_callback socket_callback, arm_timer_callback_t timer_callback)
 {
     curl_global_init(CURL_GLOBAL_ALL);
     m_curl_multi = curl_multi_init();

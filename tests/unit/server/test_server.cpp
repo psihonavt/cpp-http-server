@@ -22,7 +22,11 @@
 std::tuple<Server::HttpServer, Socket> make_server_and_connect_client()
 {
     std::string socket_path = "/tmp/test_server.sock";
-    unlink(socket_path.c_str()); // Clean up from previous run
+    if (unlink(socket_path.c_str()) != 0) {
+        if (errno != ENOENT) {
+            FAIL("unlink: " << strerror(errno));
+        }
+    }; // Clean up from previous run
 
     int server_fd = socket(AF_UNIX, SOCK_STREAM, 0);
 
@@ -30,8 +34,12 @@ std::tuple<Server::HttpServer, Socket> make_server_and_connect_client()
     addr.sun_family = AF_UNIX;
     strncpy(addr.sun_path, socket_path.c_str(), sizeof(addr.sun_path) - 1);
 
-    REQUIRE(bind(server_fd, (sockaddr*)&addr, sizeof(addr)) != -1);
-    REQUIRE(listen(server_fd, 1) != -1);
+    if (bind(server_fd, (sockaddr*)&addr, sizeof(addr)) != 0) {
+        FAIL("bind: " << strerror(errno));
+    }
+    if (listen(server_fd, 1) != 0) {
+        FAIL("listen: " << strerror(errno));
+    }
 
     // Create server with this socket
     Socket server_socket(server_fd);

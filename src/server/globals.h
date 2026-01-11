@@ -1,8 +1,10 @@
 #pragma once
 
+#include "signals.h"
+
 namespace Server {
 namespace Globals {
-inline int s_signal_pipe_wfd { -1 };
-inline int s_signal_pipe_rfd { -1 };
+static SignalPipe server_sigpipe { "server-termination-sigpipe" };
+static SignalPipe sigchld_sigpipe { "sigchld-sigpipe" };
 }
 }

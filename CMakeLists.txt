@@ -26,7 +26,7 @@ set(MY_COMPILE_FLAGS
 if(ENABLE_ASAN)
   MESSAGE(STATUS "ASAN enabled")
   set(MY_SANITIZING_FLAGS
-    -fsanitize=address
+    -fsanitize=address,undefined
   )
 else()
   MESSAGE(STATUS "ASAN disabled")
@@ -65,6 +65,7 @@ add_library(utils STATIC
   src/http/utils.cpp
   src/server/server.cpp
   src/server/client.cpp
+  src/server/tasks.cpp
   src/server/signals.cpp
   src/server/handlers.cpp
   src/server/context.cpp
@@ -105,6 +106,7 @@ add_executable(unit_tests
   tests/unit/http/test_mime.cpp
   tests/unit/http/test_urls.cpp
   tests/unit/server/test_server.cpp
+  tests/unit/server/test_tasks.cpp
   tests/unit/misc/helpers.cpp
   tests/unit/main.cpp
 )
