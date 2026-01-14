@@ -7,6 +7,7 @@
 #include <sstream>
 #include <string>
 #include <system_error>
+#include <vector>
 
 std::string& str_tolower(std::string& s)
 {
@@ -68,8 +69,31 @@ std::vector<std::string> str_split(std::string const& s, std::string const& deli
     return tokens;
 }
 
+std::tuple<std::string, std::string, std::string> str_partition(std::string const& s, std::string const& delim)
+{
+    size_t delim_pos = s.find(delim, 0);
+    if (delim_pos == std::string::npos) {
+        return { s, "", "" };
+    }
+    return { s.substr(0, delim_pos), delim, s.substr(delim_pos + delim.size(), s.size()) };
+}
+
 uint64_t generate_id()
 {
     static std::atomic<uint64_t> id_counter { 0 };
     return id_counter.fetch_add(1);
+}
+
+void str_replace_all(std::string& s, std::string const& from, std::string const& to)
+{
+    if (from.empty()) {
+        return;
+    }
+
+    size_t start_pos = 0;
+    while ((start_pos = s.find(from, start_pos)) != std::string::npos) {
+        s.replace(start_pos, from.size(), to);
+        start_pos += to.size();
+    }
+    return;
 }

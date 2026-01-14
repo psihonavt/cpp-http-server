@@ -1,7 +1,9 @@
 #include "catch2/catch_test_macros.hpp"
 #include "utils/helpers.h"
+#include <iostream>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <vector>
 
 TEST_CASE("Testing helper functions", "[utils]")
@@ -57,4 +59,32 @@ TEST_CASE("Test string splitting", "[utils]")
     CHECK(str_split("-2", "-") == std::vector<std::string> { "", "2" });
     CHECK(str_split("1-", "-") == std::vector<std::string> { "1", "" });
     CHECK(str_split("-", "-") == std::vector<std::string> { "", "" });
+}
+
+TEST_CASE("Test string replace all", "[utils]")
+{
+    std::vector<std::tuple<std::string, std::string, std::string, std::string>> data {
+        { "a+b", "+", "%20", "a%20b" },
+        { "a%20b", "+", "%20", "a%20b" },
+        { "a+b", "", "%20", "a+b" },
+        { "my_name_is_", "_", " ", "my name is " },
+        { "", "_", " ", "" },
+    };
+    for (auto& [in, from, to, out] : data) {
+        CHECK((str_replace_all(in, from, to), in == out));
+    }
+}
+
+TEST_CASE("Test string partitioning", "[utils]")
+{
+    std::vector<std::tuple<std::string, std::string, std::tuple<std::string, std::string, std::string>>> data {
+        { "a+b", "+", { "a", "+", "b" } },
+        { "a+b", "-", { "a+b", "", "" } },
+        { "a+b+c", "+", { "a", "+", "b+c" } },
+        { "", "+", { "", "", "" } },
+        { "+", "+", { "", "+", "" } },
+    };
+    for (auto& [in, delim, parts] : data) {
+        CHECK(str_partition(in, delim) == parts);
+    }
 }

@@ -4,36 +4,33 @@
 #include <cassert>
 #include <cerrno>
 #include <csignal>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
+#include <stdexcept>
+#include <sys/signal.h>
 #include <unistd.h>
 #include <utils/logging.h>
 
-namespace Server {
+namespace {
 
 void signals_handler(int sig)
 {
-    if (Globals::s_signal_pipe_wfd != -1) {
-        write(Globals::s_signal_pipe_wfd, &sig, sizeof(sig));
-    }
+    char buff[32];
+    snprintf(buff, 32, "signals_handler: %d\n", sig);
+    write(2, buff, 32);
+    write(Server::Globals::server_sigpipe.write_end(), &sig, sizeof(sig));
 }
 
-void setup_signal_handling()
+void SIGCHLD_handler(int sig)
 {
-    int signal_pipe[2];
-    if (pipe(signal_pipe) == -1) {
-        LOG_ERROR("Failed to create a pipe for signal notifiers: {}", strerror(errno));
-        std::exit(1);
-    };
+    write(2, "SIGCHLD\n", 8);
+    write(Server::Globals::sigchld_sigpipe.write_end(), &sig, sizeof(sig));
+}
 
-    auto pw_flags = fcntl(signal_pipe[1], F_GETFL);
-    if ((fcntl(signal_pipe[1], F_SETFL, pw_flags | O_NONBLOCK)) == -1) {
-        LOG_ERROR("Failed to mark the writing end of a pipe as non-blocking: {}", strerror(errno));
-        std::exit(1);
-    };
-    Globals::s_signal_pipe_rfd = signal_pipe[0];
-    Globals::s_signal_pipe_wfd = signal_pipe[1];
+void setup_termination_signal_handling()
+{
 
     std::array signals_to_handle = {
         SIGINT,
@@ -50,8 +47,7 @@ void setup_signal_handling()
 
     for (auto sig : signals_to_handle) {
         if (sigaction(sig, &sa, nullptr) == -1) {
-            LOG_ERROR("Failed to register a signal handler: {}", strerror(errno));
-            std::exit(1);
+            throw std::runtime_error(std::format("sigaction: {}", strerror(errno)));
         }
     }
 
@@ -62,23 +58,45 @@ void setup_signal_handling()
     for (auto sig : signals_to_ignore) {
         signal(sig, SIG_IGN);
     }
+    LOG_INFO("term singals sigpipe: {}/{}", Server::Globals::server_sigpipe.read_end(), Server::Globals::server_sigpipe.write_end());
 }
 
-void handle_signal_event()
+void setup_SIGCHLD_signal_handling()
 {
+    struct sigaction sa;
+    sa.sa_handler = SIGCHLD_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_NOCLDSTOP;
 
-    assert(Globals::s_signal_pipe_rfd != -1 && "signal pipe rfd must be initialized");
-    int signum;
-    auto received = read(Globals::s_signal_pipe_rfd, &signum, sizeof(signum));
-    if (received == -1) {
-        LOG_WARN("Failed to read from a signal pipe: {}", strerror(errno));
-        return;
+    if (sigaction(SIGCHLD, &sa, nullptr) == -1) {
+        throw std::runtime_error(std::format("sigaction: {}", strerror(errno)));
     }
+    LOG_INFO("sigchld singals sigpipe: {}/{}", Server::Globals::sigchld_sigpipe.read_end(), Server::Globals::sigchld_sigpipe.write_end());
+}
 
-    LOG_INFO("GOT A SIGNAL FROM THE KERNEL: {}", strsignal(signum));
-    close(Server::Globals::s_signal_pipe_rfd);
-    close(Server::Globals::s_signal_pipe_wfd);
-    std::exit(1);
+}
+
+namespace Server {
+
+void setup_signal_handling()
+{
+    setup_termination_signal_handling();
+    setup_SIGCHLD_signal_handling();
+}
+
+void reset_all_signals_to_default()
+{
+    struct sigaction sa {};
+    sa.sa_handler = SIG_DFL;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+
+    for (int sig = 1; sig < NSIG; ++sig) {
+        if (sig == SIGKILL || sig == SIGSTOP) {
+            continue;
+        }
+        sigaction(sig, &sa, nullptr);
+    }
 }
 
 }

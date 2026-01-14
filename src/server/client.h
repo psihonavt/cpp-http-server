@@ -38,7 +38,6 @@ struct RequestResult {
 
 using request_done_callback = std::function<void(RequestResult)>;
 using server_socket_callback = std::function<int(CURL*, curl_socket_t, int)>;
-using server_timer_callback = std::function<size_t(long)>;
 
 struct CurlHandleCtx {
     curl_slist* headers;
@@ -62,7 +61,7 @@ private:
     int m_running_handles;
     CURLM* m_curl_multi;
     server_socket_callback m_server_socket_callback;
-    server_timer_callback m_server_timer_callback;
+    arm_timer_callback_t m_server_timer_callback;
     std::unordered_map<CURL*, uint64_t> m_registered_handles;
 
     static int socket_callback_trampoline(
@@ -113,7 +112,7 @@ public:
         }
     }
 
-    void initialize(server_socket_callback socket_callback, server_timer_callback timer_callback);
+    void initialize(server_socket_callback socket_callback, arm_timer_callback_t timer_callback);
     bool make_request(RequestContext const& ctx,
         RequestMethod method,
         std::string const& url,

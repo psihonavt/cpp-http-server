@@ -1,7 +1,6 @@
 #include "CLI/CLI.hpp"
 #include "debug_config.h"
 #include "server/config.h"
-#include "server/globals.h"
 #include "server/handlers.h"
 #include "server/server.h"
 #include "server/signals.h"
@@ -17,6 +16,7 @@
 #include <iostream>
 #include <optional>
 #include <sys/resource.h>
+#include <unistd.h>
 
 int main(int argc, char** argv)
 {
@@ -28,14 +28,12 @@ int main(int argc, char** argv)
     LogLevel log_level { LogLevel::INFO };
     std::string proxy_handler;
     std::string log_file;
-    rlim_t ulimit { 1024 };
     app.add_option("-p, --port", port, "server port");
     app.add_option("-r, --server-root", server_root, "server root (serve files from here)");
     app.add_option("-b, --listen-backlog", listen_backlog, "listening backlog");
     app.add_option("-l, --log-level", log_level, "log level");
     app.add_option("--proxy-from", proxy_handler, "a simple proxy handler in the format <upstream_url>::<mount location>");
     app.add_option("--log-file", log_file, "a path to the log file");
-    app.add_option("--ulimit", ulimit, "a custom opened files limit");
 
     CLI11_PARSE(app, argc, argv);
     if (log_file.empty()) {
@@ -45,22 +43,17 @@ int main(int argc, char** argv)
     }
     Server::setup_signal_handling();
 
-    if (Server::Globals::s_signal_pipe_rfd == -1) {
-        LOG_ERROR("read signal pipe must be initialized.");
-        return 1;
-    }
-
     rlimit rlim;
     getrlimit(RLIMIT_NOFILE, &rlim);
-    rlim.rlim_cur = ulimit;
+    rlim.rlim_cur = Server::MAX_OPENED_FILES;
+
     if (setrlimit(RLIMIT_NOFILE, &rlim) != 0) {
         LOG_ERROR("Error setting ulimit: {}", strerror(errno));
         return 1;
     }
     getrlimit(RLIMIT_NOFILE, &rlim);
 
-    LOG_INFO("Starting the server (rlimits {}/{}; signal pipe: {}:{}) ...",
-        rlim.rlim_cur, rlim.rlim_max, Server::Globals::s_signal_pipe_rfd, Server::Globals::s_signal_pipe_wfd);
+    LOG_INFO("Starting the server (rlimits {}/{}) ...", rlim.rlim_cur, rlim.rlim_max);
     auto server { Server::create_server(port) };
 
     std::optional<Server::StaticRootHandler> sr_handler;
@@ -86,6 +79,25 @@ int main(int argc, char** argv)
         }
     }
 
+    // std::optional<Server::DroxyHandler> ce_handler;
+    // ce_handler.emplace(Server::DroxyHandler(server.tasks_queue(),
+    //     std::filesystem::path("tmp/droxy"),
+    //     "player_seeker.html.tpl"));
+    // server.mount_handler("/play", *ce_handler);
+    // LOG_INFO("Droxy on {}", "/play");
+    //
+    // auto audio_handler = Server::DroxyStreamHandler(
+    //     server.http_requester(),
+    //     Server::DroxyStreamHandler::AUDIO,
+    //     std::filesystem::path("tmp/droxy"));
+    // server.mount_handler("/audio", audio_handler);
+    //
+    // auto video_handler = Server::DroxyStreamHandler(
+    //     server.http_requester(),
+    //     Server::DroxyStreamHandler::VIDEO,
+    //     std::filesystem::path("tmp/droxy"));
+    // server.mount_handler("/video", video_handler);
+
     auto serving_strategy = Server::ServeStrategy::make_infinite_strategy();
 
     server.serve(serving_strategy);
@@ -101,6 +113,6 @@ int main(int argc, char** argv)
             cpptrace::rethrow();
         }
     }
-
+    LOG_INFO("Clean shutdown of a server. Good job, everyone!");
     return 0;
 }

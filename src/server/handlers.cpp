@@ -8,6 +8,7 @@
 #include "utils/files.h"
 #include "utils/logging.h"
 #include <optional>
+#include <string>
 
 namespace Server {
 

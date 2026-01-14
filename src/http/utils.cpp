@@ -1,5 +1,9 @@
 #include "utils.h"
+#include "utils/helpers.h"
 #include <chrono>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 int hex_to_int(char c)
 {
@@ -16,8 +20,7 @@ int hex_to_int(char c)
     return -1;
 }
 
-namespace Http {
-namespace Utils {
+namespace Http::Utils {
 
 std::string url_decode(std::string_view encoded)
 {
@@ -46,5 +49,28 @@ std::string get_current_date()
     return std::format(IMF_fixdate, now);
 }
 
+std::unordered_map<std::string, std::vector<std::string>> parse_qs(std::string_view qs)
+{
+    std::unordered_map<std::string, std::vector<std::string>> result {};
+    if (qs.empty()) {
+        return result;
+    }
+
+    std::string qs_c(qs);
+    str_replace_all(qs_c, "+", "%20");
+
+    std::vector<std::string> qs_parts = str_split(qs_c, "&");
+    for (auto& part : qs_parts) {
+        if (!part.contains("=")) {
+            continue;
+        }
+
+        auto [key, d, value] = str_partition(part, "=");
+        if (!key.empty()) {
+            result[url_decode(key)].push_back(url_decode(value));
+        }
+    }
+    return result;
 }
+
 }

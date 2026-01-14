@@ -1,8 +1,8 @@
 #pragma once
 
-namespace Server {
-namespace Globals {
-inline int s_signal_pipe_wfd { -1 };
-inline int s_signal_pipe_rfd { -1 };
-}
+#include "signals.h"
+
+namespace Server::Globals {
+extern SignalPipe server_sigpipe;
+extern SignalPipe sigchld_sigpipe;
 }

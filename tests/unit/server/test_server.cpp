@@ -22,7 +22,11 @@
 std::tuple<Server::HttpServer, Socket> make_server_and_connect_client()
 {
     std::string socket_path = "/tmp/test_server.sock";
-    unlink(socket_path.c_str()); // Clean up from previous run
+    if (unlink(socket_path.c_str()) != 0) {
+        if (errno != ENOENT) {
+            FAIL("unlink: " << strerror(errno));
+        }
+    }; // Clean up from previous run
 
     int server_fd = socket(AF_UNIX, SOCK_STREAM, 0);
 
@@ -30,8 +34,12 @@ std::tuple<Server::HttpServer, Socket> make_server_and_connect_client()
     addr.sun_family = AF_UNIX;
     strncpy(addr.sun_path, socket_path.c_str(), sizeof(addr.sun_path) - 1);
 
-    REQUIRE(bind(server_fd, (sockaddr*)&addr, sizeof(addr)) != -1);
-    REQUIRE(listen(server_fd, 1) != -1);
+    if (bind(server_fd, (sockaddr*)&addr, sizeof(addr)) != 0) {
+        FAIL("bind: " << strerror(errno));
+    }
+    if (listen(server_fd, 1) != 0) {
+        FAIL("listen: " << strerror(errno));
+    }
 
     // Create server with this socket
     Socket server_socket(server_fd);
@@ -45,7 +53,7 @@ std::tuple<Server::HttpServer, Socket> make_server_and_connect_client()
     REQUIRE(connect(client_fd, (sockaddr*)&addr, sizeof(addr)) != -1);
 
     // establish connection with the client's socket
-    server.drive(1000);
+    server.drive(1);
 
     return { std::move(server), std::move(client) };
 }
@@ -232,4 +240,50 @@ TEST_CASE("It respects armed timers", "[http_server][polling]")
     REQUIRE((strategy.used_timeouts[0] > 40 && strategy.used_timeouts[0] <= 50));
     REQUIRE((strategy.used_timeouts[1] > 0 && strategy.used_timeouts[1] <= 10));
     REQUIRE(strategy.used_timeouts[2] == 0);
+}
+
+class SimpleCommandHandler : public Server::IRequestHandler {
+private:
+    std::vector<std ::string> m_cmd;
+    Server::Tasks::Queue& m_queue;
+
+public:
+    SimpleCommandHandler(std::vector<std::string> const& cmd, Server::Tasks::Queue& queue)
+        : m_cmd { cmd }
+        , m_queue { queue }
+    {
+    }
+
+    std::optional<Http::Response>
+    handle_request(Server::RequestContext const& ctx, [[maybe_unused]] Http::Request const& request) const
+    {
+        auto cb = [&ctx](Server::Tasks::TaskResult result) {
+            if (result.is_successful) {
+                auto resp = Http::Response(Http::StatusCode::OK, result.stdout_content);
+                ctx.response_is_ready(resp);
+            } else {
+                auto resp = Http::Response(Http::StatusCode::INTERNAL_SERVER_ERROR, result.stderr_content);
+                ctx.response_is_ready(resp);
+            }
+        };
+        auto pid = m_queue.schedule_task(m_cmd, cb);
+        if (pid) {
+            return std::nullopt;
+        } else {
+            return Http::Response(Http::StatusCode::INTERNAL_SERVER_ERROR, "Couldn't submit a command!");
+        }
+    }
+};
+
+TEST_CASE("it handles tasks in a handler", "[tasks_queue][http_server]")
+{
+    auto [server, client] { make_server_and_connect_client() };
+    auto h1 = SimpleCommandHandler({ "ls-wtf-this-command-is", "-l" }, server.tasks_queue());
+    auto h2 = SimpleCommandHandler({ "sh", "-c", "echo 123" }, server.tasks_queue());
+    server.mount_handler("/tasks/1", h1);
+    server.mount_handler("/tasks/2", h2);
+    fdsend(client.fd(), "GET /tasks/1 HTTP/1.1\r\n\r\n");
+    fdsend(client.fd(), "GET /tasks/2 HTTP/1.1\r\n\r\n");
+    server.drive(1);
+    drive_server_while_get_response(server, client, { "500", "123" });
 }

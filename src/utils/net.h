@@ -28,9 +28,8 @@ public:
     Socket& operator=(Socket& s) = delete;
 
     Socket(Socket&& s) noexcept
+        : m_sockfd { std::exchange(s.m_sockfd, -1) }
     {
-        m_sockfd = s.m_sockfd;
-        s.m_sockfd = -1;
     }
 
     Socket& operator=(Socket&& s) noexcept
@@ -38,8 +37,7 @@ public:
         if (this == &s) {
             return *this;
         }
-        this->m_sockfd = s.m_sockfd;
-        s.m_sockfd = -1;
+        this->m_sockfd = std::exchange(s.m_sockfd, -1);
         return *this;
     }
 

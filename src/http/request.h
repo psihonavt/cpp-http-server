@@ -1,6 +1,7 @@
 #pragma once
 
 #include "http/headers.h"
+#include <string>
 
 namespace Http {
 

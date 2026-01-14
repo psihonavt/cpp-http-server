@@ -19,6 +19,7 @@ enum class StatusCode {
     OK = 200,
     PARTIAL_CONTENT = 206,
     BAD_REQUEST = 400,
+    FORBIDDEN = 403,
     NOT_FOUND = 404,
     METHOD_NOT_ALLOWED = 405,
     RANGE_NOT_SATISFIABLE = 416,
@@ -30,6 +31,7 @@ inline std::map<StatusCode, std::string> STATUS_CODE_REASON {
     { StatusCode::PARTIAL_CONTENT, "Partial Content" },
 
     { StatusCode::BAD_REQUEST, "Bad Request" },
+    { StatusCode::FORBIDDEN, "Forbidden" },
     { StatusCode::NOT_FOUND, "Not Found" },
     { StatusCode::METHOD_NOT_ALLOWED, "Method Not Allowed" },
     { StatusCode::RANGE_NOT_SATISFIABLE, "Range Not Satisfiable" },
@@ -108,7 +110,7 @@ struct Response {
     Response(Response const&) = delete;
     Response& operator=(Response const&) = delete;
 
-    Response(Response&& r)
+    Response(Response&& r) noexcept
         : version { std::move(r.version) }
         , status { r.status }
         , headers { std::move(r.headers) }
@@ -116,7 +118,7 @@ struct Response {
     {
     }
 
-    Response& operator=(Response&& r)
+    Response& operator=(Response&& r) noexcept
     {
         version = std::move(r.version);
         status = r.status;

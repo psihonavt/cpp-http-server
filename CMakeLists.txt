@@ -26,7 +26,7 @@ set(MY_COMPILE_FLAGS
 if(ENABLE_ASAN)
   MESSAGE(STATUS "ASAN enabled")
   set(MY_SANITIZING_FLAGS
-    -fsanitize=address
+    -fsanitize=address,undefined
   )
 else()
   MESSAGE(STATUS "ASAN disabled")
@@ -63,10 +63,13 @@ add_library(utils STATIC
   src/http/response.cpp
   src/http/mime.cpp
   src/http/utils.cpp
+  src/server/globals.cpp
   src/server/server.cpp
   src/server/client.cpp
+  src/server/tasks.cpp
   src/server/signals.cpp
   src/server/handlers.cpp
+  # src/server/droxy.cpp
   src/server/context.cpp
 )
 target_include_directories(utils PUBLIC ${CMAKE_SOURCE_DIR}/src)
@@ -87,6 +90,13 @@ target_link_libraries(server PRIVATE utils CLI11::CLI11)
 target_compile_options(server PRIVATE ${MY_COMPILE_FLAGS} ${MY_SANITIZING_FLAGS})
 target_link_options(server PRIVATE ${MY_SANITIZING_FLAGS})
 
+#### json ####
+FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz)
+FetchContent_MakeAvailable(json)
+
+target_link_libraries(utils PRIVATE nlohmann_json::nlohmann_json)
+
+
 #### tests ####
 FetchContent_Declare(
   Catch2
@@ -105,6 +115,7 @@ add_executable(unit_tests
   tests/unit/http/test_mime.cpp
   tests/unit/http/test_urls.cpp
   tests/unit/server/test_server.cpp
+  tests/unit/server/test_tasks.cpp
   tests/unit/misc/helpers.cpp
   tests/unit/main.cpp
 )

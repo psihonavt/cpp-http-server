@@ -11,7 +11,10 @@
 #include "utils/helpers.h"
 #include "utils/logging.h"
 #include "utils/net.h"
+#include <cerrno>
 #include <chrono>
+#include <cstdlib>
+#include <cstring>
 #include <curl/multi.h>
 #include <fcntl.h>
 #include <iostream>
@@ -194,7 +197,7 @@ void HttpServer::handle_send_events(int receiver_fd)
     return;
 }
 
-void HttpServer::process_connections(int poll_count)
+void HttpServer::process_event_cycle(int poll_count)
 {
     IF_VERBOSE
     {
@@ -214,8 +217,10 @@ void HttpServer::process_connections(int poll_count)
                 if (pfd.revents & (POLLIN | POLLHUP)) {
                     if (pfd.fd == m_socket) {
                         establish_connection();
-                    } else if (pfd.fd == Globals::s_signal_pipe_rfd) {
-                        handle_signal_event();
+                    } else if (pfd.fd == Globals::server_sigpipe.read_end()) {
+                        handle_termination_signals();
+                    } else if (pfd.fd == Globals::sigchld_sigpipe.read_end()) {
+                        handle_sigchld_signals();
                     } else {
                         handle_recv_events(pfd.fd);
                     }
@@ -234,19 +239,21 @@ void HttpServer::process_connections(int poll_count)
     }
     m_pfds.process_changes();
     cleanup_connections();
+    m_tasks_queue.process_tasks();
 }
 
 void HttpServer::drive(int timeout_ms)
 {
+    LOG_DEBUG("driving for {}", timeout_ms);
     int poll_count { m_pfds.do_poll(timeout_ms) };
     if (poll_count == -1) {
-        LOG_ERROR("Polling failed: {}", strerror(errno));
-        // maybe there is something in our signal pipe, read and display it
-        handle_signal_event();
-        std::exit(1);
+        if (errno != EINTR) {
+            LOG_ERROR("Got unexepcted kernel signal: {}", strerror(errno));
+            std::exit(1);
+        }
     }
 
-    process_connections(poll_count);
+    process_event_cycle(poll_count);
 }
 
 void HttpServer::disarm_due_timers()
@@ -260,7 +267,7 @@ void HttpServer::disarm_due_timers()
 void HttpServer::serve(ServeStrategy& strategy)
 {
     bool immediate_run_requested { false };
-    while ((strategy.serve_infitine()) ? true : (strategy.drives_cap >= 0)) {
+    while (!m_should_shutdown && ((strategy.serve_infitine()) ? true : (strategy.drives_cap >= 0))) {
         auto timeout_ms { immediate_run_requested ? 0 : strategy.default_poll_timeout };
         auto armed_timers_count_before { m_armed_timers.size() };
         std::chrono::time_point<std::chrono::system_clock> now;
@@ -317,6 +324,11 @@ void HttpServer::set_server_headers(Http::Response& response)
 {
     response.headers.set("Server", SERVERN_NAME);
     response.headers.set("Date", Http::Utils::get_current_date());
+    if (response.status != Http::StatusCode::OK && response.status != Http::StatusCode::PARTIAL_CONTENT) {
+        if (!response.headers.has("Connection")) {
+            response.headers.set("Connection", "close");
+        }
+    }
 }
 
 void HttpServer::notify_response_ready(RequestContext const& ctx, Http::Response& response)
@@ -411,4 +423,30 @@ void HttpServer::cancel_connetion(int fd)
 }
 
 void HttpServer::cleanup_connections() { m_connections_pending_cleanup.clear(); }
+
+void HttpServer::handle_termination_signals()
+{
+
+    int signum;
+    auto received = read(Globals::server_sigpipe.read_end(), &signum, sizeof(signum));
+    if (received == -1) {
+        LOG_WARN("Failed to read from a signal pipe: {}", strerror(errno));
+        return;
+    }
+
+    LOG_INFO("GOT A SIGNAL FROM THE KERNEL: {}. Requesting server shutdown ...", strsignal(signum));
+    m_should_shutdown = true;
+    arm_polling_timer(1);
+}
+
+void HttpServer::handle_sigchld_signals()
+{
+    int signum;
+    auto received = read(Globals::sigchld_sigpipe.read_end(), &signum, sizeof(signum));
+    if (received == -1) {
+        LOG_WARN("Failed to read from a signal pipe: {}", strerror(errno));
+        return;
+    }
+    m_tasks_queue.process_tasks();
+}
 }

@@ -32,7 +32,7 @@ struct File {
         f.fd = -1;
     }
 
-    File& operator=(File&& f)
+    File& operator=(File&& f) noexcept
     {
         if (this == &f) {
             return *this;

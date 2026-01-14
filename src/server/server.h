@@ -6,6 +6,7 @@
 #include "handlers.h"
 #include "http/request.h"
 #include "http/response.h"
+#include "tasks.h"
 #include "utils/net.h"
 #include <cstdint>
 #include <curl/curl.h>
@@ -48,13 +49,14 @@ private:
     std::unordered_map<std::string, std::reference_wrapper<IRequestHandler>> m_handlers;
     std::unordered_map<uint64_t, std::list<RequestContext>> m_registered_ctxs;
     HttpClient::Requester m_http_requester;
-
     std::priority_queue<time_point, std::vector<time_point>, std::greater<time_point>> m_armed_timers {};
+    Tasks::Queue m_tasks_queue;
+    bool m_should_shutdown;
 
     void establish_connection();
     void handle_recv_events(int sender_fd);
     void handle_send_events(int receiver_fd);
-    void process_connections(int poll_count);
+    void process_event_cycle(int poll_count);
     void set_server_headers(Http::Response& response);
     void disarm_due_timers();
     int requester_socket_fn_cb(CURL* handle, curl_socket_t s, int what);
@@ -67,6 +69,9 @@ private:
         };
     }
 
+    void handle_termination_signals();
+    void handle_sigchld_signals();
+
 public:
     HttpServer(Socket& socket)
         : m_socket { std::move(socket) }
@@ -75,9 +80,12 @@ public:
         , m_handlers {}
         , m_registered_ctxs {}
         , m_http_requester {}
+        , m_tasks_queue(100, nullptr)
+        , m_should_shutdown { false }
     {
         m_pfds.request_change(PfdsChange { .fd = m_socket, .action = PfdsChangeAction::Add, .events = POLLIN });
-        m_pfds.request_change(PfdsChange { .fd = Globals::s_signal_pipe_rfd, .action = PfdsChangeAction::Add, .events = POLLIN });
+        m_pfds.request_change(PfdsChange { .fd = Globals::server_sigpipe.read_end(), .action = PfdsChangeAction::Add, .events = POLLIN });
+        m_pfds.request_change(PfdsChange { .fd = Globals::sigchld_sigpipe.read_end(), .action = PfdsChangeAction::Add, .events = POLLIN });
         m_pfds.process_changes();
 
         auto socket_fn = [this](CURL* handle, curl_socket_t s, int what) { return this->requester_socket_fn_cb(handle, s, what); };
@@ -87,6 +95,8 @@ public:
         if (!m_http_requester.is_initialized()) {
             throw std::runtime_error("error initializing the HTTP requester.");
         }
+
+        m_tasks_queue.set_arm_timer_cb(arm_timer_fn);
     }
 
     size_t arm_polling_timer(long timeout_ms);
@@ -100,6 +110,11 @@ public:
     HttpClient::Requester& http_requester()
     {
         return m_http_requester;
+    }
+
+    Tasks::Queue& tasks_queue()
+    {
+        return m_tasks_queue;
     }
 
     void cancel_connetion(int fd);
