@@ -1,0 +1,8 @@
+#pragma once
+
+namespace {
+	constexpr bool VERBOSE_DEBUG_OUTPUT = @VERBOSE_DEBUG_VALUE@;
+}
+
+#define IF_VERBOSE if constexpr(VERBOSE_DEBUG_OUTPUT)
+
