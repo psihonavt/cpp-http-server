@@ -19,7 +19,7 @@
 namespace Server {
 
 namespace HttpClient {
-void Requester::initialize(server_socket_callback socket_callback, arm_timer_callback_t timer_callback)
+void Requester::initialize(server_socket_cb_t socket_callback, arm_timer_callback_t timer_callback)
 {
     curl_global_init(CURL_GLOBAL_ALL);
     m_curl_multi = curl_multi_init();
@@ -62,8 +62,23 @@ size_t write_data_callback(char* buffer, size_t size, size_t nmemb, void* userp)
         LOG_ERROR("the write_data_callback wasn't called with a correct pointer to a handle context");
         return 0;
     }
-    handle_ctx->response_content.append(buffer, real_size);
-    LOG_DEBUG("{} response_content s: {}", handle_ctx->url, handle_ctx->response_content.size());
+
+    if (!handle_ctx->headers_were_returned) {
+        long response_code { -1 };
+        auto retcode = curl_easy_getinfo(handle_ctx->handle, CURLINFO_RESPONSE_CODE, &response_code);
+        if (retcode != CURLE_OK) {
+            LOG_ERROR("Error getting CURLINFO_RESPONSE_CODE: {}", curl_easy_strerror(retcode));
+            return 0;
+        }
+        if (response_code < 300 || response_code > 399) {
+            Http::Headers response_headers { extract_headers(handle_ctx->handle) };
+            handle_ctx->cb(Http::Response(static_cast<Http::StatusCode>(response_code), response_headers));
+            handle_ctx->headers_were_returned = true;
+        }
+    }
+
+    handle_ctx->cb(Http::ResponseBodyChunk(buffer, nmemb));
+    LOG_DEBUG("{} response_content s: {}", handle_ctx->truncated_url(), nmemb);
 
     return real_size;
 }
@@ -85,7 +100,7 @@ int debug_callback(CURL* handle,
     if (ctx->url.empty()) {
         LOG_DEBUG("curl debug_callback: {}<EMPTY><-{}", handle, static_cast<int>(type));
     } else {
-        LOG_DEBUG("curl debug_callback: {}<-{}", ctx->url, static_cast<int>(type));
+        LOG_DEBUG("curl debug_callback: {}<-{}", ctx->truncated_url(), static_cast<int>(type));
     }
     return 0;
 }
@@ -95,7 +110,7 @@ bool Requester::make_request(
     RequestMethod method,
     std::string const& url,
     Http::Headers const& headers,
-    request_done_callback done_callback)
+    on_request_progress_cb_t done_callback)
 {
     LOG_INFO("Preparing a handle for requesting {}:{}", static_cast<int>(method), url);
     if (method != RequestMethod::GET) {
@@ -110,10 +125,11 @@ bool Requester::make_request(
     }
 
     auto* handle_ctx = new CurlHandleCtx {
-        .headers = nullptr,
+        .req_headers = nullptr,
         .cb = done_callback,
-        .response_content = "",
-        .url = url
+        .url = url,
+        .handle = handle,
+        .headers_were_returned = false,
     };
 
     CURLcode retcode;
@@ -142,10 +158,18 @@ bool Requester::make_request(
             curl_easy_cleanup(handle);
             return false;
         }
-        handle_ctx->headers = cheaders;
+        handle_ctx->req_headers = cheaders;
     }
 
     retcode = curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, write_data_callback);
+    if (retcode != CURLE_OK) {
+        LOG_ERROR("Error setting CURLOPT_WRITEFUNCTION: {}", curl_easy_strerror(retcode));
+        delete handle_ctx;
+        curl_easy_cleanup(handle);
+        return false;
+    }
+
+    retcode = curl_easy_setopt(handle, CURLOPT_FOLLOWLOCATION, 1);
     if (retcode != CURLE_OK) {
         LOG_ERROR("Error setting CURLOPT_WRITEFUNCTION: {}", curl_easy_strerror(retcode));
         delete handle_ctx;
@@ -253,7 +277,7 @@ int Requester::drive(int socket_fd, short events)
     return 0;
 }
 
-Http::Headers Requester::extract_headers(CURL* handle)
+Http::Headers extract_headers(CURL* handle)
 {
     unsigned int origins { CURLH_HEADER | CURLH_TRAILER };
     int request { -1 };
@@ -280,7 +304,6 @@ void Requester::handle_msgdone(CURLMsg* msg)
 
     CurlHandleCtx* ctx_pointer;
     CURLcode retcode;
-    RequestResult result("unexpected error making a request");
 
     retcode = curl_easy_getinfo(handle, CURLINFO_PRIVATE, &ctx_pointer);
     if (retcode != CURLE_OK) {
@@ -289,7 +312,7 @@ void Requester::handle_msgdone(CURLMsg* msg)
     }
     if (msg->data.result != CURLE_OK) {
         LOG_DEBUG("Non-OK curl result: {}", curl_easy_strerror(msg->data.result));
-        result = RequestResult(curl_easy_strerror(msg->data.result));
+        ctx_pointer->cb(Http::Response(Http::StatusCode::BAD_GATEWAY, "failed to request the upstream"));
     } else {
         long response_code { -1 };
         Http::Headers response_headers { extract_headers(handle) };
@@ -298,19 +321,8 @@ void Requester::handle_msgdone(CURLMsg* msg)
             LOG_ERROR("Error getting CURLINFO_RESPONSE_CODE: {}", curl_easy_strerror(retcode));
             return;
         }
-        if (!response_headers.content_length()) {
-            response_headers.set(
-                Http::Headers::CONTENT_LENGTH_HEADER_NAME,
-                std::to_string(ctx_pointer->response_content.size()));
-        }
-        auto response = Http::Response(
-            static_cast<Http::StatusCode>(response_code),
-            ctx_pointer->response_content,
-            response_headers);
-        result = RequestResult(response);
-        LOG_DEBUG("handle_msgdone for {}; status code: {}", ctx_pointer->url, response_code);
+        LOG_DEBUG("handle_msgdone for {}; status code: {}", ctx_pointer->truncated_url(), response_code);
     }
-    ctx_pointer->cb(std::move(result));
     return;
 }
 

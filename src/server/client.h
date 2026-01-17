@@ -2,14 +2,13 @@
 
 #include "curl/curl.h"
 #include "http/headers.h"
-#include "http/response.h"
 #include "server/context.h"
+#include <algorithm>
 #include <cstdint>
 #include <curl/multi.h>
 #include <functional>
-#include <optional>
+#include <string_view>
 #include <unordered_map>
-#include <utility>
 
 namespace Server {
 
@@ -19,48 +18,38 @@ enum class RequestMethod {
     GET
 };
 
-struct RequestResult {
-    std::optional<Http::Response> response;
-    std::string no_response_reason;
-
-    RequestResult(std::string const& no_reason)
-        : response { std::nullopt }
-        , no_response_reason { no_reason }
-    {
-    }
-
-    RequestResult(Http::Response& resp)
-        : response { std::move(resp) }
-        , no_response_reason { "" }
-    {
-    }
-};
-
-using request_done_callback = std::function<void(RequestResult)>;
-using server_socket_callback = std::function<int(CURL*, curl_socket_t, int)>;
+using on_request_progress_cb_t = std::function<void(response_or_chunk_t&&)>;
+using server_socket_cb_t = std::function<int(CURL*, curl_socket_t, int)>;
 
 struct CurlHandleCtx {
-    curl_slist* headers;
-    request_done_callback cb;
-    std::string response_content;
+    curl_slist* req_headers;
+    on_request_progress_cb_t cb;
     std::string url;
+    CURL* handle;
+    bool headers_were_returned;
 
     ~CurlHandleCtx()
     {
-        if (headers) {
-            curl_slist_free_all(headers);
+        if (req_headers) {
+            curl_slist_free_all(req_headers);
         }
+    }
+
+    std::string_view truncated_url()
+    {
+        return std::string_view(url.data(), std::min(url.size(), static_cast<size_t>(20)));
     }
 };
 
 size_t write_data_callback(char* buffer, size_t size, size_t nmemb, void* userp);
+Http::Headers extract_headers(CURL* handle);
 
 class Requester {
 private:
     bool m_initialized;
     int m_running_handles;
     CURLM* m_curl_multi;
-    server_socket_callback m_server_socket_callback;
+    server_socket_cb_t m_server_socket_callback;
     arm_timer_callback_t m_server_timer_callback;
     std::unordered_map<CURL*, uint64_t> m_registered_handles;
 
@@ -91,7 +80,6 @@ private:
     }
 
     void handle_msgdone(CURLMsg* msg);
-    Http::Headers extract_headers(CURL* handle);
     void cleanup_handle(CURL* handle);
 
 public:
@@ -112,12 +100,12 @@ public:
         }
     }
 
-    void initialize(server_socket_callback socket_callback, arm_timer_callback_t timer_callback);
+    void initialize(server_socket_cb_t socket_callback, arm_timer_callback_t timer_callback);
     bool make_request(RequestContext const& ctx,
         RequestMethod method,
         std::string const& url,
         Http::Headers const& headers,
-        request_done_callback done_callback);
+        on_request_progress_cb_t done_callback);
 
     bool is_initialized()
     {

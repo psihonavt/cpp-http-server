@@ -9,8 +9,7 @@ enum class Error {
     response_writer_invalid_state,
     response_writer_headers_too_big,
     response_writer_bad_stream,
-    client_closed_connection,
-    cant_parse_request,
+    response_writer_no_content_length,
 };
 
 class HttpErrorCategory : public std::error_category {
@@ -29,10 +28,8 @@ public:
             return "Headers are too big";
         case Error::response_writer_bad_stream:
             return "Error wrting the response: bad stream";
-        case Error::client_closed_connection:
-            return "Client closed connection";
-        case Error::cant_parse_request:
-            return "Error parsing request";
+        case Error::response_writer_no_content_length:
+            return "Error writing the response: it has body but no Content-Length headers";
         default:
             return "Unknown HTTP error";
         }

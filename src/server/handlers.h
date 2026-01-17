@@ -1,20 +1,16 @@
 #pragma once
 
 #include "http/request.h"
-#include "http/response.h"
 #include "server/client.h"
 #include "server/context.h"
 #include <filesystem>
-#include <optional>
 #include <string>
 
 namespace Server {
 
 class IRequestHandler {
 public:
-    virtual std::optional<Http::Response> handle_request(
-        RequestContext const& ctx, Http::Request const& request) const
-        = 0;
+    virtual void handle_request(RequestContext const& ctx, Http::Request const& request) const = 0;
 
     virtual ~IRequestHandler() { }
 };
@@ -29,8 +25,7 @@ public:
     {
     }
 
-    std::optional<Http::Response> handle_request(
-        RequestContext const& ctx, Http::Request const& request) const override;
+    void handle_request(RequestContext const& ctx, Http::Request const& request) const override;
 };
 
 class SimpleProxyHandler : public IRequestHandler {
@@ -47,25 +42,7 @@ public:
     {
     }
 
-    std::optional<Http::Response> handle_request(
-        RequestContext const& ctx, Http::Request const& request) const override;
-};
-
-class StreamProxyHandler : public IRequestHandler {
-
-private:
-    HttpClient::Requester& m_requester;
-    std::string const m_upstream;
-
-public:
-    StreamProxyHandler(std::string const& upstream, HttpClient::Requester& requester)
-        : m_requester { requester }
-        , m_upstream { upstream }
-    {
-    }
-
-    std::optional<Http::Response> handle_request(
-        RequestContext const& ctx, Http::Request const& request) const override;
+    void handle_request(RequestContext const& ctx, Http::Request const& request) const override;
 };
 
 }

@@ -96,11 +96,9 @@ void drive_server_while_get_response(
 
 class DummyHandler : public Server::IRequestHandler {
 public:
-    std::optional<Http::Response> handle_request(
-        [[maybe_unused]] Server::RequestContext const& ctx,
-        Http::Request const& request) const
+    void handle_request([[maybe_unused]] Server::RequestContext const& ctx, Http::Request const& request) const
     {
-        return Http::Response(Http::StatusCode::OK, get_content(request), "plain/text");
+        ctx.response_is_ready(Http::Response(Http::StatusCode::OK, get_content(request), "plain/text"));
     }
 
     std::string get_content(Http::Request const& request) const
@@ -112,19 +110,16 @@ public:
 class ResponseNotReadyHandler : public Server::IRequestHandler {
 public:
     mutable std::vector<std::reference_wrapper<Server::RequestContext const>> contexts;
-    mutable Server::server_response_ready_cb ready_cb;
+    mutable std::function<void(uint64_t, Http::Response&)> ready_cb;
 
     ResponseNotReadyHandler()
         : contexts {}
     {
     }
 
-    std::optional<Http::Response> handle_request(
-        Server::RequestContext const& ctx,
-        [[maybe_unused]] Http::Request const& request) const
+    void handle_request(Server::RequestContext const& ctx, [[maybe_unused]] Http::Request const& request) const
     {
         contexts.push_back(ctx);
-        return {};
     }
 };
 
@@ -201,7 +196,7 @@ TEST_CASE("It handles not-yet-ready responses", "[http_server]")
     }
 
     auto response2 { Http::Response(Http::StatusCode::OK, "response2") };
-    handler.contexts[1].get().response_is_ready(response2);
+    handler.contexts[1].get().response_is_ready(std::move(response2));
 
     // the first response is still not ready;
     // the server won't return the second "ready-to-send" response while the first one is still pending
@@ -213,7 +208,7 @@ TEST_CASE("It handles not-yet-ready responses", "[http_server]")
     }
 
     auto response1 { Http::Response(Http::StatusCode::OK, "response1") };
-    handler.contexts[0].get().response_is_ready(response1);
+    handler.contexts[0].get().response_is_ready(std::move(response1));
 
     std::string server_response {};
     attempts = 10;
@@ -254,23 +249,18 @@ public:
     {
     }
 
-    std::optional<Http::Response>
-    handle_request(Server::RequestContext const& ctx, [[maybe_unused]] Http::Request const& request) const
+    void handle_request(Server::RequestContext const& ctx, [[maybe_unused]] Http::Request const& request) const
     {
         auto cb = [&ctx](Server::Tasks::TaskResult result) {
             if (result.is_successful) {
-                auto resp = Http::Response(Http::StatusCode::OK, result.stdout_content);
-                ctx.response_is_ready(resp);
+                ctx.response_is_ready(Http::Response(Http::StatusCode::OK, result.stdout_content));
             } else {
-                auto resp = Http::Response(Http::StatusCode::INTERNAL_SERVER_ERROR, result.stderr_content);
-                ctx.response_is_ready(resp);
+                ctx.response_is_ready(Http::Response(Http::StatusCode::INTERNAL_SERVER_ERROR, result.stderr_content));
             }
         };
         auto pid = m_queue.schedule_task(m_cmd, cb);
-        if (pid) {
-            return std::nullopt;
-        } else {
-            return Http::Response(Http::StatusCode::INTERNAL_SERVER_ERROR, "Couldn't submit a command!");
+        if (!pid) {
+            ctx.response_is_ready(Http::Response(Http::StatusCode::INTERNAL_SERVER_ERROR, "Couldn't submit a command!"));
         }
     }
 };

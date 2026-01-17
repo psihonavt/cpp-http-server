@@ -1,6 +1,7 @@
 #include "CLI/CLI.hpp"
 #include "debug_config.h"
 #include "server/config.h"
+#include "server/droxy.h"
 #include "server/handlers.h"
 #include "server/server.h"
 #include "server/signals.h"
@@ -28,12 +29,14 @@ int main(int argc, char** argv)
     LogLevel log_level { LogLevel::INFO };
     std::string proxy_handler;
     std::string log_file;
+    bool droxy_enabled { false };
     app.add_option("-p, --port", port, "server port");
     app.add_option("-r, --server-root", server_root, "server root (serve files from here)");
     app.add_option("-b, --listen-backlog", listen_backlog, "listening backlog");
     app.add_option("-l, --log-level", log_level, "log level");
     app.add_option("--proxy-from", proxy_handler, "a simple proxy handler in the format <upstream_url>::<mount location>");
     app.add_option("--log-file", log_file, "a path to the log file");
+    app.add_option("--droxy", droxy_enabled, "YTDroxy anyone??");
 
     CLI11_PARSE(app, argc, argv);
     if (log_file.empty()) {
@@ -79,24 +82,25 @@ int main(int argc, char** argv)
         }
     }
 
-    // std::optional<Server::DroxyHandler> ce_handler;
-    // ce_handler.emplace(Server::DroxyHandler(server.tasks_queue(),
-    //     std::filesystem::path("tmp/droxy"),
-    //     "player_seeker.html.tpl"));
-    // server.mount_handler("/play", *ce_handler);
-    // LOG_INFO("Droxy on {}", "/play");
-    //
-    // auto audio_handler = Server::DroxyStreamHandler(
-    //     server.http_requester(),
-    //     Server::DroxyStreamHandler::AUDIO,
-    //     std::filesystem::path("tmp/droxy"));
-    // server.mount_handler("/audio", audio_handler);
-    //
-    // auto video_handler = Server::DroxyStreamHandler(
-    //     server.http_requester(),
-    //     Server::DroxyStreamHandler::VIDEO,
-    //     std::filesystem::path("tmp/droxy"));
-    // server.mount_handler("/video", video_handler);
+    if (droxy_enabled) {
+        auto ce_handler = Server::DroxyHandler(server.tasks_queue(),
+            std::filesystem::path("tmp/droxy"),
+            "player_seeker.html.tpl");
+        server.mount_handler("/play", ce_handler);
+        LOG_INFO("Droxy on {}", "/play");
+
+        auto audio_handler = Server::DroxyStreamHandler(
+            server.http_requester(),
+            Server::DroxyStreamHandler::AUDIO,
+            std::filesystem::path("tmp/droxy"));
+        server.mount_handler("/audio", audio_handler);
+
+        auto video_handler = Server::DroxyStreamHandler(
+            server.http_requester(),
+            Server::DroxyStreamHandler::VIDEO,
+            std::filesystem::path("tmp/droxy"));
+        server.mount_handler("/video", video_handler);
+    }
 
     auto serving_strategy = Server::ServeStrategy::make_infinite_strategy();
 

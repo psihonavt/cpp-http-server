@@ -22,6 +22,7 @@
 #include <sys/poll.h>
 #include <sys/signal.h>
 #include <utility>
+#include <variant>
 
 namespace Server {
 
@@ -146,16 +147,10 @@ void HttpServer::handle_recv_events(int sender_fd)
             auto request_id = generate_id();
             LOG_INFO("[{}][s:{}] Got HTTP r:{} {} {}?{}", conn.conn_id(), conn.fd(), request_id, request.method, request.uri.path, request.uri.query);
             m_registered_ctxs[conn.conn_id()].push_back(RequestContext(request_id, conn, get_response_ready_cb()));
-            auto response = handle_request(m_registered_ctxs.at(conn.conn_id()).back(), request);
-            conn.queue_request_response(request_id, request, response);
+            conn.queue_request(request_id, request);
+            handle_request(m_registered_ctxs.at(conn.conn_id()).back(), request);
         }
         conn.clear_pending_requests();
-
-        if (conn.has_more_to_write()) {
-            conn.set_want_wrire(true);
-            m_pfds.request_change(PfdsChange { .fd = sender_fd, .action = PfdsChangeAction::AddEvents, .events = POLLOUT });
-        }
-
         return;
     }
 }
@@ -187,13 +182,12 @@ void HttpServer::handle_send_events(int receiver_fd)
         }
 
         if (!conn.has_more_to_write()) {
-            LOG_INFO("[{}][s:{}] the entire response was sent. rrq: {}", conn.conn_id(), conn.fd(), conn.request_response_queue().size());
+            LOG_INFO("[{}][s:{}] the entire response was sent", conn.conn_id(), conn.fd());
             conn.set_want_wrire(false);
             m_pfds.request_change(PfdsChange { .fd = receiver_fd, .action = PfdsChangeAction::RemoveEvents, .events = POLLOUT });
             return;
         }
     }
-
     return;
 }
 
@@ -206,6 +200,9 @@ void HttpServer::process_event_cycle(int poll_count)
     }
     if (poll_count > 0) {
         for (auto const& pfd : m_pfds.all()) {
+            if (pfd.revents == 0) {
+                continue;
+            }
 
             auto fd_kind = m_pfds.get_kind(pfd.fd);
             IF_VERBOSE
@@ -244,7 +241,6 @@ void HttpServer::process_event_cycle(int poll_count)
 
 void HttpServer::drive(int timeout_ms)
 {
-    LOG_DEBUG("driving for {}", timeout_ms);
     int poll_count { m_pfds.do_poll(timeout_ms) };
     if (poll_count == -1) {
         if (errno != EINTR) {
@@ -279,12 +275,15 @@ void HttpServer::serve(ServeStrategy& strategy)
                 m_armed_timers.pop();
             }
         } else {
-            LOG_DEBUG("No armed timers or we were requested to poll immediately");
+            LOG_DEBUG("No armed timers or we were requested to poll immediately ({})", immediate_run_requested);
         }
         if (!strategy.serve_infitine()) {
             strategy.used_timeouts.emplace_back(timeout_ms);
         }
-        LOG_INFO("Drive timeout {} ms, cap: {}", timeout_ms, strategy.drives_cap);
+        IF_VERBOSE
+        {
+            LOG_DEBUG("Drive timeout {} ms, cap: {}", timeout_ms, strategy.drives_cap);
+        }
         drive(timeout_ms);
         immediate_run_requested = false;
         bool new_timers_armed { m_armed_timers.size() > armed_timers_count_before };
@@ -305,37 +304,36 @@ void HttpServer::mount_handler(std::string const& path, IRequestHandler& handler
     m_handlers.emplace(path, handler);
 }
 
-std::optional<Http::Response> HttpServer::handle_request(RequestContext const& ctx, Http::Request const& request)
+void HttpServer::handle_request(RequestContext const& ctx, Http::Request const& request)
 {
     std::optional<Http::Response> response = Http::Response(Http::StatusCode::NOT_FOUND);
+    bool handler_found { false };
     for (auto const& [path, handler] : m_handlers) {
         if (request.uri.path.starts_with(path)) {
-            response = handler.get().handle_request(ctx, request);
+            handler.get().handle_request(ctx, request);
+            handler_found = true;
             break;
         }
     }
-    if (response) {
-        set_server_headers(*response);
+    if (!handler_found) {
+        ctx.response_is_ready(Http::Response(Http::StatusCode::NOT_FOUND));
     }
-    return response;
 }
 
 void HttpServer::set_server_headers(Http::Response& response)
 {
-    response.headers.set("Server", SERVERN_NAME);
-    response.headers.set("Date", Http::Utils::get_current_date());
-    if (response.status != Http::StatusCode::OK && response.status != Http::StatusCode::PARTIAL_CONTENT) {
-        if (!response.headers.has("Connection")) {
-            response.headers.set("Connection", "close");
-        }
+    if (!response.headers.has("server")) {
+        response.headers.set("Server", SERVERN_NAME);
+    }
+    if (!response.headers.has("Date")) {
+        response.headers.set("Date", Http::Utils::get_current_date());
     }
 }
 
-void HttpServer::notify_response_ready(RequestContext const& ctx, Http::Response& response)
+void HttpServer::notify_response_ready(RequestContext const& ctx, response_or_chunk_t&& response)
 {
     auto request_id = ctx.request_id();
     auto client_fd = ctx.conn_fd();
-    LOG_INFO("A response to request {} is ready", request_id);
     if (!m_registered_ctxs.contains(ctx.conn_id())) {
         LOG_WARN("[s:{}] got unregistered ctx r:{}", client_fd, request_id);
     } else if (!m_connections.contains(client_fd)) {
@@ -344,14 +342,24 @@ void HttpServer::notify_response_ready(RequestContext const& ctx, Http::Response
         for (auto& [req_id, request, resp] : m_connections.at(client_fd).request_response_queue()) {
             if (req_id == request_id) {
                 if (resp) {
-                    LOG_WARN("[s:{}] request {} already has a ready-to-send response", client_fd, request_id);
+                    if (!std::holds_alternative<Http::ResponseBodyChunk>(response)) {
+                        LOG_WARN("[s:{}][r:{}] already has a ready-to-send response", client_fd, request_id);
+                        return;
+                    }
+                    LOG_INFO("[s:{}][r:{}] moving a ready-to-send chunk resposne", client_fd, request_id);
+                    resp->add_body_chunk(std::move(std::get<Http::ResponseBodyChunk>(response)));
                 } else {
-                    LOG_INFO("[s:{}] moving a read-to-send resposne for a request {}", client_fd, request_id);
-                    // set_server_headers(response);
-                    resp = std::move(response);
-                    m_connections.at(client_fd).set_want_wrire(true);
-                    m_pfds.request_change(PfdsChange { client_fd, PfdsChangeAction::AddEvents, POLLOUT });
+                    if (!std::holds_alternative<Http::Response>(response)) {
+                        LOG_WARN("[s:{}][r:{}] unexpected response variant - expected a response got a chunk", client_fd, request_id);
+                        return;
+                    }
+                    LOG_INFO("[s:{}] moving a ready-to-send resposne for a request {}", client_fd, request_id);
+                    auto& h_response = std::get<Http::Response>(response);
+                    set_server_headers(h_response);
+                    resp = std::move(h_response);
                 }
+                m_connections.at(client_fd).set_want_wrire(true);
+                m_pfds.request_change(PfdsChange { client_fd, PfdsChangeAction::AddEvents, POLLOUT });
             }
         }
     }
@@ -372,9 +380,10 @@ int HttpServer::requester_socket_fn_cb([[maybe_unused]] CURL* handle, curl_socke
     {
         if (handle) {
             auto ctx = m_http_requester.get_handle_ctx(handle);
-            LOG_DEBUG("[s:{}] socket fn for url {}:{}", s, handle, ctx->url);
+            LOG_DEBUG("[s:{}] socket fn for url {}:{}", s, handle, ctx->truncated_url());
         }
-        LOG_DEBUG("[s:{}] socket fn for {}", s, what);
+        LOG_DEBUG("[s:{}] libcurl socket callback: what={} (IN={}, OUT={}, INOUT={}, REMOVE={})",
+            s, what, CURL_POLL_IN, CURL_POLL_OUT, CURL_POLL_INOUT, CURL_POLL_REMOVE);
     }
 
     if (what == CURL_POLL_REMOVE) {
@@ -398,9 +407,7 @@ int HttpServer::requester_socket_fn_cb([[maybe_unused]] CURL* handle, curl_socke
     if (what & CURL_POLL_OUT) {
         pevents |= POLLOUT;
     }
-    if (what & CURL_POLL_INOUT) {
-        pevents |= (POLLIN | POLLOUT);
-    }
+
     if (!m_pfds.has_fd(s)) {
         m_pfds.request_change(PfdsChange { s, PfdsChangeAction::Add, pevents, FdKind::requester });
     } else {

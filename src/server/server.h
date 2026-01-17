@@ -13,7 +13,6 @@
 #include <functional>
 #include <limits>
 #include <list>
-#include <optional>
 #include <queue>
 #include <stdexcept>
 #include <unordered_map>
@@ -49,7 +48,7 @@ private:
     std::unordered_map<std::string, std::reference_wrapper<IRequestHandler>> m_handlers;
     std::unordered_map<uint64_t, std::list<RequestContext>> m_registered_ctxs;
     HttpClient::Requester m_http_requester;
-    std::priority_queue<time_point, std::vector<time_point>, std::greater<time_point>> m_armed_timers {};
+    std::priority_queue<time_point_t, std::vector<time_point_t>, std::greater<time_point_t>> m_armed_timers {};
     Tasks::Queue m_tasks_queue;
     bool m_should_shutdown;
 
@@ -60,12 +59,12 @@ private:
     void set_server_headers(Http::Response& response);
     void disarm_due_timers();
     int requester_socket_fn_cb(CURL* handle, curl_socket_t s, int what);
-    void notify_response_ready(RequestContext const& ctx, Http::Response& response);
+    void notify_response_ready(RequestContext const& ctx, response_or_chunk_t&& response);
 
     auto get_response_ready_cb()
     {
-        return [this](RequestContext const& ctx, Http::Response& response) {
-            return this->notify_response_ready(ctx, response);
+        return [this](RequestContext const& ctx, response_or_chunk_t&& response) {
+            return this->notify_response_ready(ctx, std::move(response));
         };
     }
 
@@ -105,7 +104,7 @@ public:
     void drive(int timeout_ms);
     void mount_handler(std::string const& path, IRequestHandler& handler);
 
-    std::optional<Http::Response> handle_request(RequestContext const& ctx, Http::Request const& request);
+    void handle_request(RequestContext const& ctx, Http::Request const& request);
 
     HttpClient::Requester& http_requester()
     {

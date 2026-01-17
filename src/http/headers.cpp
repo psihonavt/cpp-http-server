@@ -50,10 +50,13 @@ void Headers::override(std::string const& field, std::string const& value)
     headers[canonize_header_field(field)] = std::vector<std::string> { value };
 }
 
-std::optional<int> Headers::content_length() const
+std::optional<size_t> Headers::content_length() const
 {
     if (has(CONTENT_LENGTH_HEADER_NAME)) {
-        return str_toint(get(CONTENT_LENGTH_HEADER_NAME).back());
+        auto maybe_content_length = str_toint(get(CONTENT_LENGTH_HEADER_NAME).back());
+        if (maybe_content_length) {
+            return static_cast<size_t>(*maybe_content_length);
+        }
     }
     return std::nullopt;
 }
@@ -66,7 +69,7 @@ std::optional<std::string> Headers::content_type() const
     return std::nullopt;
 }
 
-Headers get_default_headers(int content_length, std::string const& content_type)
+Headers get_default_headers(size_t content_length, std::string const& content_type)
 {
     Headers h { Headers {} };
     h.set(Headers::CONTENT_LENGTH_HEADER_NAME, std::to_string(content_length));

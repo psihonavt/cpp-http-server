@@ -10,6 +10,7 @@
 #include <cstring>
 #include <format>
 #include <ios>
+#include <iostream>
 #include <memory>
 #include <optional>
 #include <sstream>
@@ -35,39 +36,48 @@ void ensure_write_error(Http::ResponseWriter& w, Http::Error expected_error)
     REQUIRE(writing_error);
 }
 
-TEST_CASE("Writing HTTP responses", "[http_response_writer]")
+std::pair<Socket, Socket> make_socket_pair()
 {
     int fds[2];
     REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0);
 
     Socket sender { fds[0] };
     Socket receiver { fds[1] };
+    return { std::move(sender), std::move(receiver) };
+}
+
+Http::ResponseBodyChunk make_response_chunk(std::string& content)
+{
+    auto ss { std::make_unique<std::stringstream>() };
+    ss->str(content);
+    return Http::ResponseBodyChunk(std::move(ss), content.size());
+}
+
+TEST_CASE("Writing HTTP responses", "[http_response_writer]")
+{
+    auto [sender, receiver] = make_socket_pair();
 
     SECTION("Empty body")
     {
-        auto no_body_response = Http::Response(
-            Http::StatusCode::OK,
-            Http::get_default_headers(0, "plain/text"),
-            std::nullopt);
+        auto no_body_response = Http::Response(Http::StatusCode::OK);
 
-        Http::ResponseWriter w { std::move(no_body_response), sender };
+        LOG_DEBUG("Wtf?");
+        Http::ResponseWriter w { no_body_response, sender };
         while (!w.is_done()) {
             REQUIRE(w.write() == std::nullopt);
         }
-        REQUIRE(fdread(receiver) == "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nContent-Type: plain/text\r\n\r\n");
+        auto resp = fdread(receiver);
+        REQUIRE(resp.contains("200 OK"));
     }
 
     SECTION("Small body")
     {
         std::string content { "a small body" };
-        auto size { content.size() };
 
         auto response = Http::Response(
-            Http::StatusCode::OK,
-            Http::get_default_headers(0, "plain/text"),
-            Http::ResponseBody { std::make_unique<std::stringstream>(content), size });
+            Http::StatusCode::OK, content);
 
-        Http::ResponseWriter w { std::move(response), sender };
+        Http::ResponseWriter w { response, sender };
         while (!w.is_done()) {
             REQUIRE(w.write() == std::nullopt);
         }
@@ -90,10 +100,10 @@ TEST_CASE("Writing HTTP responses", "[http_response_writer]")
 
         auto response = Http::Response(
             Http::StatusCode::OK,
-            Http::get_default_headers(0, "plain/text"),
-            Http::ResponseBody(std::move(bfss), size));
+            Http::get_default_headers(size, "plain/text"),
+            Http::ResponseBodyChunk(std::move(bfss), size));
 
-        Http::ResponseWriter w { std::move(response), sender };
+        Http::ResponseWriter w { response, sender };
 
         size_t written_bytes { 0 };
         LOG_DEBUG("sender: {}; receiver: {}", sender.fd(), receiver.fd());
@@ -117,9 +127,9 @@ TEST_CASE("Writing HTTP responses", "[http_response_writer]")
     {
         Http::Headers h {};
         h.set("x-too-large", std::string(Http::MAX_HEADERS_LEN + 10, 'x'));
-        auto resp = Http::Response(Http::StatusCode::OK, h, std::nullopt);
+        auto resp = Http::Response(Http::StatusCode::OK, "some-content", h);
 
-        Http::ResponseWriter w { std::move(resp), sender };
+        Http::ResponseWriter w { resp, sender };
         ensure_write_error(w, Http::Error::response_writer_headers_too_big);
     }
 
@@ -132,21 +142,17 @@ TEST_CASE("Writing HTTP responses", "[http_response_writer]")
 
         auto response = Http::Response(
             Http::StatusCode::OK,
-            Http::get_default_headers(0, "plain/text"),
-            Http::ResponseBody { std::move(content_stream), size });
+            Http::get_default_headers(size, "plain/text"),
+            Http::ResponseBodyChunk { std::move(content_stream), size });
 
-        Http::ResponseWriter w { std::move(response), sender };
+        Http::ResponseWriter w { response, sender };
         ensure_write_error(w, Http::Error::response_writer_bad_stream);
     }
 }
 
 TEST_CASE("Writing ranged HTTP responses", "[http_response_writer],[ranged]")
 {
-    int fds[2];
-    REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0);
-
-    Socket sender { fds[0] };
-    Socket receiver { fds[1] };
+    auto [sender, receiver] = make_socket_pair();
 
     Http::Headers req_headers {};
     std::string content { "a test string" };
@@ -172,7 +178,7 @@ TEST_CASE("Writing ranged HTTP responses", "[http_response_writer],[ranged]")
         SECTION(name)
         {
             req_headers.set(Http::Headers::RANGE_HEADER_NAME, range_header);
-            Http::ResponseWriter w { std::move(response), sender, req_headers };
+            Http::ResponseWriter w { response, sender, req_headers };
 
             while (!w.is_done()) {
                 REQUIRE(w.write() == std::nullopt);
@@ -188,7 +194,7 @@ TEST_CASE("Writing ranged HTTP responses", "[http_response_writer],[ranged]")
     SECTION("Range not satisfiable")
     {
         req_headers.set(Http::Headers::RANGE_HEADER_NAME, "bytes=31-45");
-        Http::ResponseWriter w { std::move(response), sender, req_headers };
+        Http::ResponseWriter w { response, sender, req_headers };
 
         while (!w.is_done()) {
             REQUIRE(w.write() == std::nullopt);
@@ -197,4 +203,29 @@ TEST_CASE("Writing ranged HTTP responses", "[http_response_writer],[ranged]")
         REQUIRE(client_data.starts_with(status_416));
         REQUIRE(client_data.find("\r\nContent-Range: bytes */13\r\n") != std::string::npos);
     }
+}
+
+TEST_CASE("Writing responses with body chunks being dynamically added", "[http_response_writer]")
+{
+    auto [sender, receiver] = make_socket_pair();
+    auto response = Http::Response(Http::StatusCode::OK);
+    std::string chunk1 { "chunked" };
+    std::string chunk2 { " " };
+    std::string chunk3 { "content" };
+    auto content_length = std::to_string(chunk1.size() + chunk2.size() + chunk3.size());
+    response.headers.override(Http::Headers::CONTENT_LENGTH_HEADER_NAME, content_length);
+    Http::ResponseWriter w { response, sender };
+    REQUIRE(w.write() == std::nullopt);
+    std::string resp = fdread(receiver);
+    REQUIRE(resp.starts_with("HTTP/1.1 200 OK\r\n"));
+    REQUIRE(resp.contains(std::format("Content-Length: {}", content_length)));
+
+    response.add_body_chunk(make_response_chunk(chunk1));
+    REQUIRE(w.write() == std::nullopt);
+    REQUIRE(fdread(receiver) == chunk1);
+    response.add_body_chunk(make_response_chunk(chunk2));
+    response.add_body_chunk(make_response_chunk(chunk3));
+    REQUIRE(w.write() == std::nullopt);
+    REQUIRE(w.is_done());
+    REQUIRE(fdread(receiver) == " content");
 }

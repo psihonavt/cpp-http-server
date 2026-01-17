@@ -1,19 +1,25 @@
 #include "context.h"
 #include "http/req_reader.h"
 #include "utils/logging.h"
+#include <optional>
 
 namespace Server {
 
-void Connection::queue_request_response(uint64_t request_id, Http::Request& request, std::optional<Http::Response>& response)
+void Connection::queue_request(uint64_t request_id, Http::Request& request)
 {
-    m_req_response_queue.emplace_back(request_id, std::move(request), std::move(response));
+    m_req_response_queue.emplace_back(request_id, request, std::nullopt);
 }
 
 bool Connection::has_more_to_write()
 {
     if (m_response_writer && !m_response_writer->is_done()) {
-        LOG_DEBUG("[s:{}] has a writer that's writing", fd());
-        return true;
+        if (m_response_writer->waiting_for_more_content_to_send()) {
+            LOG_DEBUG("[s:{}] has a writer waits for more content to send", fd());
+            return false;
+        } else {
+            LOG_DEBUG("[s:{}] has a writer that's writing", fd());
+            return true;
+        }
     }
     if (!m_req_response_queue.empty()) {
         if (std::get<2>(m_req_response_queue.front())) {
@@ -32,8 +38,7 @@ bool Connection::write_pending()
             LOG_ERROR("[{}][s:{}] Attempt to send a not-yet-ready response", m_connection_id, fd());
             return false;
         }
-        m_response_writer.emplace(std::move(*response), m_client, request.headers);
-        m_req_response_queue.pop_front();
+        m_response_writer.emplace(*response, m_client, request.headers);
     }
 
     auto maybe_erorr { m_response_writer->write() };
@@ -44,6 +49,7 @@ bool Connection::write_pending()
     }
 
     if (m_response_writer->is_done()) {
+        m_req_response_queue.pop_front();
         m_response_writer.reset();
     }
     return true;

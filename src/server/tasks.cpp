@@ -1,7 +1,6 @@
 #include "tasks.h"
 #include "debug_config.h"
 #include "utils/logging.h"
-#include <_string.h>
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
@@ -112,7 +111,7 @@ void Task::mark_as_expired()
     safe_task_cb_call(*this, result);
 }
 
-std::optional<time_point> Task::expires_at() const
+std::optional<time_point_t> Task::expires_at() const
 {
     if (m_spawned_at && m_ttl) {
         return *m_spawned_at + *m_ttl;
@@ -268,7 +267,7 @@ void Queue::arm_timer_if_needed()
     if (!m_arm_timer_cb) {
         return;
     }
-    std::vector<time_point> expiry_tstamps;
+    std::vector<time_point_t> expiry_tstamps;
     auto now = std::chrono::system_clock::now();
     for (auto const& [pid, task] : m_tasks) {
         if (task.state() == TaskState::RUNNING && task.expires_at() && *task.expires_at() > now) {

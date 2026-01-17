@@ -5,7 +5,6 @@
 #include "server/signals.h"
 #include "utils/helpers.h"
 #include "utils/logging.h"
-#include <_abort.h>
 #include <algorithm>
 #include <cassert>
 #include <cerrno>
@@ -53,8 +52,8 @@ private:
     int m_stderr;
     TaskState m_state;
     std::string m_command;
-    std::optional<time_point> m_spawned_at;
-    std::optional<time_point> m_finished_at;
+    std::optional<time_point_t> m_spawned_at;
+    std::optional<time_point_t> m_finished_at;
     std::optional<on_task_finished_cb_t> m_on_finished_cb;
     std::optional<task_ttl_t> m_ttl;
     int m_exit_code;
@@ -233,16 +232,16 @@ public:
         return m_state == TaskState::FINISHED && m_exit_code == 0;
     }
 
-    std::optional<time_point> finished_at() const { return m_finished_at; }
+    std::optional<time_point_t> finished_at() const { return m_finished_at; }
 
     std::string const& command() const { return m_command; }
 
-    std::optional<time_point> spawned_at() const { return m_spawned_at; }
+    std::optional<time_point_t> spawned_at() const { return m_spawned_at; }
 
     std::optional<task_ttl_t> ttl() const { return m_ttl; }
 
     friend void safe_task_cb_call(Task const& t, TaskResult const& result);
-    std::optional<time_point> expires_at() const;
+    std::optional<time_point_t> expires_at() const;
 };
 
 class Queue {

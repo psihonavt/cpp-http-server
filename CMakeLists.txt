@@ -69,7 +69,7 @@ add_library(utils STATIC
   src/server/tasks.cpp
   src/server/signals.cpp
   src/server/handlers.cpp
-  # src/server/droxy.cpp
+  src/server/droxy.cpp
   src/server/context.cpp
 )
 target_include_directories(utils PUBLIC ${CMAKE_SOURCE_DIR}/src)

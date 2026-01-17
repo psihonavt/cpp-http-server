@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <optional>
 #include <ostream>
 #include <string>
@@ -40,7 +41,7 @@ struct Headers {
         return !get(field).empty();
     }
 
-    std::optional<int> content_length() const;
+    std::optional<size_t> content_length() const;
     std::optional<std::string> content_type() const;
     bool has_valid_range() const;
     std::optional<ContentRange> get_range() const;
@@ -56,7 +57,7 @@ struct Headers {
     }
 };
 
-Headers get_default_headers(int content_length, std::string const& content_type);
+Headers get_default_headers(size_t content_length, std::string const& content_type);
 std::string canonize_header_field(std::string const& field);
 bool operator==(Headers const& h1, Headers const& h2);
 std::ostream& operator<<(std::ostream& cout, Headers const& h);

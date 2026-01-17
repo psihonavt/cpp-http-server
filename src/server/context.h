@@ -7,13 +7,14 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <variant>
 #include <vector>
 
 namespace Server {
 
 using arm_timer_callback_t = std::function<size_t(long)>;
-using server_response_ready_cb = std::function<void(uint64_t, Http::Response&)>;
-using time_point = std::chrono::time_point<std::chrono::system_clock>;
+using time_point_t = std::chrono::time_point<std::chrono::system_clock>;
+using response_or_chunk_t = std::variant<Http::Response, Http::ResponseBodyChunk>;
 
 class Connection {
 private:
@@ -51,7 +52,7 @@ public:
         return !m_has_error && m_wants_write && has_more_to_write();
     }
 
-    void queue_request_response(uint64_t request_id, Http::Request& request, std::optional<Http::Response>& response);
+    void queue_request(uint64_t request_id, Http::Request& request);
 
     req_response_queue_t& request_response_queue() { return m_req_response_queue; }
 
@@ -70,7 +71,7 @@ public:
 
 class RequestContext {
 private:
-    using server_response_ready_cb = std::function<void(RequestContext const&, Http::Response&)>;
+    using server_response_ready_cb = std::function<void(RequestContext const&, response_or_chunk_t&&)>;
     uint64_t m_request_id;
     server_response_ready_cb m_response_ready_cb;
     Connection const& m_connection;
@@ -83,9 +84,9 @@ public:
     {
     }
 
-    void response_is_ready(Http::Response& resp) const
+    void response_is_ready(response_or_chunk_t&& resp) const
     {
-        m_response_ready_cb(*this, resp);
+        m_response_ready_cb(*this, std::move(resp));
     }
 
     uint64_t request_id() const { return m_request_id; }

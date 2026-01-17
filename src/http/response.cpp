@@ -27,7 +27,7 @@ StatusCode ResponseWriter::get_adjusted_status()
         if (maybe_range) {
             if ((maybe_range = adjust_range_to_body(*maybe_range)); maybe_range) {
                 m_content_range = maybe_range;
-                m_response.headers.set_content_range(m_response.body->length, *m_content_range);
+                m_response.headers.set_content_range(m_response.content_length(), *m_content_range);
                 m_response.headers.override(Headers::CONTENT_LENGTH_HEADER_NAME, std::to_string(maybe_range->upper - maybe_range->lower + 1));
                 return StatusCode::PARTIAL_CONTENT;
             } else {
@@ -43,22 +43,23 @@ void ResponseWriter::adjust_response()
     auto new_status = get_adjusted_status();
     if (m_response.status != new_status) {
         m_response.status = new_status;
-        if (m_response.body && new_status == StatusCode::RANGE_NOT_SATISFIABLE) {
-            m_response.headers.set_content_range(m_response.body->length, NOT_SATISFIABLE_RANGE);
-            m_response.body = std::nullopt;
+        if (!m_response.body.empty() && new_status == StatusCode::RANGE_NOT_SATISFIABLE) {
+            m_response.headers.set_content_range(*m_response.headers.content_length(), NOT_SATISFIABLE_RANGE);
+            m_response.headers.override(Headers::CONTENT_LENGTH_HEADER_NAME, "0");
+            m_response.body.clear();
         }
     }
 }
 
 std::optional<ContentRange> ResponseWriter::adjust_range_to_body(ContentRange const& range)
 {
-    if (!m_response.body) {
+    if (m_response.body.empty() || m_response.body.size() > 1) {
         return std::nullopt;
     }
 
     ContentRange adjusted_range {};
     if (range.lower != ContentRange::UNBOUND_RANGE) {
-        if (static_cast<size_t>(range.lower) > m_response.body->length - 1) {
+        if (static_cast<size_t>(range.lower) > m_response.content_length() - 1) {
             return std::nullopt;
         }
         adjusted_range.lower = range.lower;
@@ -67,13 +68,13 @@ std::optional<ContentRange> ResponseWriter::adjust_range_to_body(ContentRange co
     }
 
     if (range.upper != ContentRange::UNBOUND_RANGE) {
-        if (static_cast<size_t>(range.upper) > m_response.body->length - 1) {
-            adjusted_range.upper = static_cast<int>(m_response.body->length - 1);
+        if (static_cast<size_t>(range.upper) > m_response.content_length() - 1) {
+            adjusted_range.upper = static_cast<int>(m_response.content_length() - 1);
         } else {
             adjusted_range.upper = range.upper;
         }
     } else {
-        adjusted_range.upper = static_cast<int>(m_response.body->length - 1);
+        adjusted_range.upper = static_cast<int>(m_response.content_length() - 1);
     }
 
     return adjusted_range;
@@ -144,21 +145,36 @@ response_write_result ResponseWriter::write_body()
         return make_error_code(Error::response_writer_invalid_state);
     }
 
-    if (!m_response.body) {
+    IF_VERBOSE
+    {
+        LOG_DEBUG("body chunks={};total_body_bytes_sent={};content-length={}",
+            m_response.body.size(), m_total_body_bytes_sent, m_response.content_length());
+    }
+    if (m_response.body.empty() && m_total_body_bytes_sent == m_response.content_length()) {
+        LOG_DEBUG("[s:{}] done sending", m_recipient.fd());
         m_status = Status::WRITING_DONE;
         return std::nullopt;
+    } else if (m_response.body.empty() && m_total_body_bytes_sent != m_response.content_length()) {
+        LOG_DEBUG("[s:{}] nothing to write in body; waiting for more chunks", m_recipient.fd());
+        return std::nullopt;
+    } else if (m_response.body.empty()) {
+        LOG_WARN("[s:{}] no body chunks and not all expected bytes were written ({}/{})",
+            m_recipient.fd(), m_total_body_bytes_sent, m_response.content_length());
+        m_status = Status::WRITING_DONE;
+        return Error::response_writer_bad_stream;
     }
 
+    auto& current_chunk = m_response.body.front();
     size_t body_bytes_to_read;
-    auto& content { m_response.body->content };
+    auto& content { current_chunk.content };
 
     if (m_content_range) {
         body_bytes_to_read = static_cast<size_t>(m_content_range->upper + 1);
     } else {
-        body_bytes_to_read = m_response.body->length;
+        body_bytes_to_read = current_chunk.length;
     }
 
-    size_t chunk_size { std::min(static_cast<size_t>(1024 * 1024), m_response.body->unread_bytes(body_bytes_to_read)) };
+    size_t chunk_size { std::min(static_cast<size_t>(1024 * 1024), current_chunk.unread_bytes(body_bytes_to_read)) };
 
     // first allocation for a body chunk
     if (!m_body_buff) {
@@ -173,7 +189,7 @@ response_write_result ResponseWriter::write_body()
 
     // if current chunk is done sending, read the next chunk from the body's content
     if (m_body_buff_sent == m_body_buff_size) {
-        chunk_size = std::min(chunk_size, m_response.body->unread_bytes(body_bytes_to_read));
+        chunk_size = std::min(chunk_size, current_chunk.unread_bytes(body_bytes_to_read));
         content->read(m_body_buff.get(), static_cast<std::streamsize>(chunk_size));
         if (content->bad()) {
             return Error::response_writer_bad_stream;
@@ -182,11 +198,11 @@ response_write_result ResponseWriter::write_body()
         m_body_buff_size = static_cast<size_t>(content->gcount());
     }
 
-    // done sending
+    // done sending current chunk
     if (m_body_buff_size == 0) {
-        LOG_DEBUG("[s:{}] done sending", m_recipient.fd());
-        m_status = Status::WRITING_DONE;
-        return std::nullopt;
+        LOG_INFO("[s:{}] done sending a body chunk", m_recipient.fd());
+        m_response.body.pop_front();
+        return write_body();
     }
 
     IF_VERBOSE
@@ -202,10 +218,13 @@ response_write_result ResponseWriter::write_body()
         }
     }
     m_body_buff_sent += static_cast<size_t>(sent);
+    m_total_body_bytes_sent += static_cast<size_t>(sent);
     IF_VERBOSE
     {
-        LOG_DEBUG("[s:{}] bytes sent ... {}", m_recipient.fd(), sent);
+        LOG_DEBUG("[s:{}] bytes sent={}; total body bytes sent={}, content_length={}",
+            m_recipient.fd(), sent, m_total_body_bytes_sent, m_response.content_length());
     }
+
     // if the current chunk is done, attempt to send the next one immediately
     if (m_body_buff_sent == m_body_buff_size) {
         return write_body();
@@ -215,8 +234,13 @@ response_write_result ResponseWriter::write_body()
 
 response_write_result ResponseWriter::write()
 {
+    if (!m_response.body.empty() && m_response.content_length() == 0) {
+        return Error::response_writer_no_content_length;
+    }
+    auto last_status { m_status };
+
     response_write_result result {};
-    switch (m_status) {
+    switch (last_status) {
     case Status::WRITING_STATUS_LINE:
         result = write_status_line();
         break;
@@ -235,6 +259,9 @@ response_write_result ResponseWriter::write()
 
     if (result != std::nullopt) {
         LOG_WARN("ResponseWriter.write() [{}] error: {}", std::to_underlying(m_status), result->message());
+    }
+    if (result == std::nullopt && m_status != last_status) {
+        return write();
     }
     return result;
 }
@@ -256,4 +283,19 @@ size_t ResponseWriter::calculate_headers_size()
     total_size += rn_size;
     return total_size;
 }
+
+size_t Response::content_length()
+{
+    auto h_content_length = headers.content_length();
+    if (!h_content_length) {
+        return 0;
+    }
+    return *h_content_length;
+}
+
+void Response::add_body_chunk(ResponseBodyChunk&& chunk)
+{
+    body.emplace_back(std::move(chunk));
+}
+
 }

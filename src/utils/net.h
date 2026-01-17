@@ -100,7 +100,6 @@ struct std::formatter<PfdsChange, char> {
 };
 
 class PfdsHolder {
-
     std::vector<pollfd> m_pfds {};
     std::unordered_map<int, std::pair<size_t, FdKind>> m_index_map {};
     std::unordered_map<int, PfdsChange> m_pending_changes {};
