@@ -16,7 +16,6 @@
 #include <functional>
 #include <optional>
 #include <string>
-#include <sys/_types/_pid_t.h>
 #include <sys/fcntl.h>
 #include <sys/signal.h>
 #include <sys/wait.h>

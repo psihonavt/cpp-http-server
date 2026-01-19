@@ -1,5 +1,13 @@
-
 cmake_minimum_required(VERSION 3.25.0)
+
+# Force clang++ and libc++ on Linux
+if(UNIX AND NOT APPLE)
+  set(CMAKE_C_COMPILER clang-18)
+  set(CMAKE_CXX_COMPILER clang++-18)
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -stdlib=libc++")
+  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -stdlib=libc++ -lc++abi")
+endif()
+
 project(http_server)
 
 set(CMAKE_CXX_STANDARD 23)
@@ -7,6 +15,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_COLOR_DIAGNOSTICS ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF CACHE BOOL "Disable C++ module scanning" FORCE)
+
 
 OPTION(ENABLE_ASAN "Enable AddressSanitizer" OFF)
 

@@ -5,6 +5,7 @@
 
 std::string fdread(int fd, int attempts)
 {
+    std::string result { "" };
     char buff[8192];
     while (attempts >= 0) {
         ssize_t n = recv(fd, buff, 8192, 0);
@@ -18,9 +19,13 @@ std::string fdread(int fd, int attempts)
             }
             FAIL("recv failed: " << strerror(errno));
         }
-        return std::string(buff, static_cast<size_t>(n));
+        result.append(buff, static_cast<size_t>(n));
+        if (n < 8192) {
+            return result;
+        }
+        attempts -= 1;
     }
-    return "";
+    return result;
 }
 
 void fdsend(int fd, std::string const& content)

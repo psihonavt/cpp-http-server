@@ -200,7 +200,7 @@ response_write_result ResponseWriter::write_body()
 
     // done sending current chunk
     if (m_body_buff_size == 0) {
-        LOG_INFO("[s:{}] done sending a body chunk", m_recipient.fd());
+        LOG_DEBUG("[s:{}] done sending a body chunk", m_recipient.fd());
         m_response.body.pop_front();
         return write_body();
     }

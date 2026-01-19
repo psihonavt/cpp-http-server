@@ -22,6 +22,7 @@ bool has_metadata_available(std::filesystem::path const& metadata_folder, std::s
 {
     auto dump_location = json_dump_localtion(metadata_folder, video_id);
     if (!std::filesystem::exists(dump_location)) {
+        LOG_DEBUG("droxy: no JSON file {}", dump_location.string());
         return false;
     }
     std::ifstream file { dump_location };
@@ -38,7 +39,7 @@ bool has_metadata_available(std::filesystem::path const& metadata_folder, std::s
         }
 
         for (auto& format : data[0]) {
-            if (format["video_ext"] == "mp4") {
+            if (format["ext"] == "mp4") {
                 auto url = format["url"];
                 auto parts = str_split(url, "expire=");
                 if (parts.size() != 2) {
@@ -175,12 +176,12 @@ std::optional<std::string> DroxyStreamHandler::get_stream_url(std::string const&
     std::ifstream file { dump_location };
     json data = json::parse(file);
     std::string ext = (m_stream_type == AUDIO) ? "m4a" : "mp4";
-    std::string key_ext = (m_stream_type == AUDIO) ? "audio_ext" : "video_ext";
     for (auto& format : data[0]) {
-        if (format[key_ext] == ext) {
+        if (format["ext"] == ext) {
             return format["url"];
         }
     }
+    LOG_DEBUG("no suiting {} url for {}", static_cast<int>(m_stream_type), video_id);
     return std::nullopt;
 }
 

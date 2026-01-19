@@ -36,7 +36,6 @@ void setup_termination_signal_handling()
         SIGINT,
         SIGABRT,
         SIGALRM,
-        SIGINFO,
         SIGHUP,
         SIGTERM,
     };

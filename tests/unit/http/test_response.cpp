@@ -106,7 +106,7 @@ TEST_CASE("Writing HTTP responses", "[http_response_writer]")
         Http::ResponseWriter w { response, sender };
 
         size_t written_bytes { 0 };
-        LOG_DEBUG("sender: {}; receiver: {}", sender.fd(), receiver.fd());
+        LOG_DEBUG("LARGE BODY: sender: {}; receiver: {}", sender.fd(), receiver.fd());
 
         while (!w.is_done()) {
             int ready = ph.do_poll(1000);
@@ -116,9 +116,15 @@ TEST_CASE("Writing HTTP responses", "[http_response_writer]")
                     auto error { w.write() };
                     REQUIRE(error == std::nullopt);
                     written_bytes += fdread(receiver).size();
+                    continue;
+                }
+                if (pfd.revents & POLLIN) {
+                    written_bytes += fdread(receiver).size();
+                    continue;
                 }
             }
         }
+        written_bytes += fdread(receiver, 10).size();
 
         REQUIRE(written_bytes > 1024 * 2048);
     }
