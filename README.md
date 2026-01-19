@@ -23,24 +23,24 @@ steps I've taken so far in implementing the HTTP server.
 1. Learning the language basics. C++ is a complex and huge language. To get the basics, I thoroughly worked my way through all chapters in the [learncpp tutorial](https://learncpp.com).
 An awesome and free resource.
 
-2. Before writing the server, I needed some basic understanding of how sockets and "stuff" work in Unix-like system. The [Beej's network programming guide](https://beej.us/guide/bgnet/html/index-wide.html) was of great help and inspiration.
+2. Before writing the server, I needed some basic understanding of how sockets and "stuff" work in Unix-like systems. The [Beej's network programming guide](https://beej.us/guide/bgnet/html/index-wide.html) was of great help and inspiration.
 
 3. GitHub is full of "write-your-server" tutorials. I stumbled upon [this one - C-Web-Server](https://github.com/bloominstituteoftechnology/C-Web-Server), and it was
 a good starting point. I ended up not following it all, though.
 
 4. From the very start, I wanted to make my implementation somewhat compliant with the HTTP/1.1 standard. Meaning that I had to take request parsing seriously.
-I was also eager to find test suites to use against my server. I must admit, that for a brief moment of weakness I considered using an existing library for parsing requests.
-But then, while looking at established HTTP server implementations on GitHub (mainly to see if I could reuse their test suites), I stumbled upon the [mongrel](https://github.com/mongrel/mongrel/), a high-performant Ruby HTTP server. Not many tests I could've reused, but it had a weird requests parsing logic described in `*rl` files that looked awfully
-similar to C. That's how I learned about [Ragel](https://www.colm.net/files/ragel/ragel-guide-6.10.pdf), and a way to implement a HTTP parser without losing too much dignity.
+I was also eager to find test suites to use against my server. I must admit that for a brief moment of weakness I considered using an existing library for parsing requests.
+But then, while looking at established HTTP server implementations on GitHub (mainly to see if I could reuse their test suites), I stumbled upon the [mongrel](https://github.com/mongrel/mongrel), a high-performance Ruby HTTP server. Not many tests I could've reused, but it had a weird requests parsing logic described in `*rl` files that looked awfully
+similar to C. That's how I learned about [Ragel](https://www.colm.net/files/ragel/ragel-guide-6.10.pdf), and a way to implement an HTTP parser without losing too much dignity.
 This [intro article](https://web.archive.org/web/20130307150514/http://zedshaw.com/essays/ragel_state_charts.html) about Ragel by Zed Shaw (the mongrel's author) was also helpful.
 
 5. My first implementation of a server was a simple TCP server on blocking sockets that could accept basic HTTP requests and return a response compliant with the standard.
 
 6. Then, I updated my server to serve static files from a `www` root. With that implementation, the testing became much more exciting - I generated a very heavy reveal.js presentation and attempted to serve it with my server to a standard browser. It instantly revealed humongous memory leaks and general slowness. At this point, I was comparing
-the performance of my server with the standard Python's `http.server` module. Needless to say that the Python server blew my masterpiece out of the water.
+the performance of my server with Python's standard `http.server` module. Needless to say that the Python server blew my masterpiece out of the water.
 
 7. Somewhere around this time, I had started using `lldb` a lot. I had to learn it first - the learning curve wasn't horribly steep though. This debugger is a very advanced
-and complex tool on its own, but the more I use it, the more confident I become in my ability to debug pretty much anything. I actually made a point of reading a book about `lldb`. Debugging a compiled language is very different from pdb/ipdb I employed a lot in Python. I'd also say that the earlier you get hands on experience in debugging the better - for certain things like memory errors and leaks there is no alternative. I used the `leaks` program a bit to prove that my server had no memory leaks. Be prepared to learn a thing or
+and complex tool on its own, but the more I use it, the more confident I become in my ability to debug pretty much anything. I actually made a point of reading a book about `lldb`. Debugging a compiled language is very different from pdb/ipdb I employed a lot in Python. I'd also say that the earlier you get hands-on experience in debugging the better - for certain things like memory errors and leaks there is no alternative. I used the `leaks` program a bit to prove that my server had no memory leaks. Be prepared to learn a thing or
 two about code signing in OS X.
 
 8. Another tangential thing I had (and was willing) to learn was a build system for my project. Using `clang++` to compile one to two files was fun and dandy until it stopped.
@@ -79,4 +79,13 @@ of projects use it and it did make adding dependencies to my project a breeze.
 
 24. The importance of load testing. It was a smart decision to establish a suite of integration tests in Python. It was a piece of cake to implement a test case that spams the target server with hundreds of requests in dozens of threads. It was not a piece of cake to iron out all the bugs and design deficiencies this rate of requests revealed. Talking about my server supporting custom request handlers: for my load testing, I would spawn two processes of a server, where one server automatically mounts a handler that proxies all request to the other server. Having logs from both servers handy or running them with lldb was also instrumental in pinning down some of the bugs.
 
-25. Something I've known all along from experience: there is no better debugging method for concurrent/async systems than writing logs in the right places and thinking hard. Also, when writing logs - make sure that all log records pertained to the same event (e.g., a HTTP request) have some unique identifier in them (e.g., a request id, a socket fd, whatever). It helps with tracing a lot.
+25. Something I've known all along from experience: there is no better debugging method for concurrent/async systems than writing logs in the right places and thinking hard. Also, when writing logs - make sure that all log records pertained to the same event (e.g., a HTTP request) have some unique identifier in them (e.g., a request id, a socket fd, whatever). It helps with tracing a lot. 
+
+26. Implementing a simple async tasks queue was a lot of "fun". Learned a lot about forking, pipes, and signals. The fact that a child inherits signal handlers and open files from its parent was a surprise. Luckily, I caught it early in the unit tests - Catch2 was suspiciously receiving and reporting SIGTERM signals without test cases failing. As it turns out, every task I spawned for tests inherited signal handlers from the parent, including a SIGTERM handler from Catch2. When this task gets killed, it receives a SIGTERM from the parent, and it gets handled by Catch2's handlers that print it out as an error to stderr. It took many hours of debugging with Claude Code and then ChatGPT. ChatGPT proved itself much more useful in this situation.
+
+27. In my "droxy" handler I had to implement proxying from a streaming endpoint. When everything is being driven by an event loop, sooner or later callbacks enter the stage. But I've always been hesitant about using callbacks unless absolutely necessary. While with libcurl it was the only option, in my request handlers I had options. After some very careful deliberation and multiple versions, I also settled on using callbacks to notify the server from within a handler about a response (or its chunk) ready to be written. It's not ideal, to be honest. But that's the best approach I was able to come up with while maintaining relatively simple logic. I thought hard about passing writer objects to handlers using which they could write whatever and whenever they want (which wouldn't result in an actual write, but rather in buffering bytes for sending when the event loop decides it's time). But I hit a wall in my design skills where everything I'd come up with was overly complicated and convoluted.
+
+28. Compiling my server binary on modern Linux was a surprisingly low-effort endeavour. It even runs and does the "droxying", but nowhere near as good as the Go implementation. The memory and CPU footprints are smaller, though. 
+
+
+... And that's it for now. I'm done with this project for the time being. It was an excellent exercise and great fun to implement. I like C++. 
